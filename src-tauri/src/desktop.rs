@@ -2555,10 +2555,18 @@ mod tests {
             tile_render_markdown: false,
             render_html_markdown: false,
             open_at_cursor: true,
+            oss_provider: "".to_string(),
+            oss_endpoint: "".to_string(),
+            oss_bucket: "".to_string(),
+            oss_access_key_id: "".to_string(),
+            oss_remote_prefix: "".to_string(),
+            sync_on_startup: false,
+            sync_interval: "".to_string(),
             surface_width: None,
             surface_height: None,
             toggle_visibility_shortcut: toggle_visibility_shortcut.into(),
             last_known_base_dir: None,
+            sync_strategy: "".to_string(),
         }
     }
 

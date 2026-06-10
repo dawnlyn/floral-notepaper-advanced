@@ -222,7 +222,7 @@ struct MetadataFile {
 
 #[derive(Debug, Clone)]
 pub struct NoteStore {
-    base_dir: PathBuf,
+    pub(crate) base_dir: PathBuf,
 }
 
 pub fn default_store() -> Result<NoteStore, AppError> {
@@ -1427,6 +1427,15 @@ mod tests {
             toggle_visibility_shortcut: String::new(),
             last_known_base_dir: None,
             open_at_cursor: true,
+
+            oss_provider: "".to_string(),
+            oss_endpoint: "".to_string(),
+            oss_bucket: "".to_string(),
+            oss_access_key_id: "".to_string(),
+            oss_remote_prefix: "".to_string(),
+            sync_on_startup: false,
+            sync_interval: "".to_string(),
+            sync_strategy: "".to_string(),
         };
 
         store.save_config(saved.clone()).expect("save config");

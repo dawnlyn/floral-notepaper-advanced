@@ -42,7 +42,7 @@ hmac = "0.12"
 sha1 = "0.10"
 base64 = "0.22"
 percent-encoding = "2"
-quick-xml = "0.37"
+quick-xml = { version = "0.37", features = ["serialize"] }
 hostname = "0.4"
 dirs = "6"
 

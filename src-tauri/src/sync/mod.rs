@@ -4,7 +4,7 @@ pub mod scheduler;
 pub mod state;
 pub mod types;
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 use crate::services::notes::{default_store, AppError};
 use oss::{OssClient, OssConfig};
@@ -35,8 +35,8 @@ pub async fn sync_now(app: AppHandle) -> Result<SyncResultDto, AppError> {
     }
 
     // Get AccessKeySecret from keyring
-    let access_key_secret = scheduler::get_oss_credential_public(&config.oss_access_key_id)
-        .unwrap_or_default();
+    let access_key_secret =
+        scheduler::get_oss_credential_public(&config.oss_access_key_id).unwrap_or_default();
 
     let oss_config = OssConfig {
         endpoint: config.oss_endpoint.clone(),
