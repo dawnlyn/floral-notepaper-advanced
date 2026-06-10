@@ -4,10 +4,10 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 
-use crate::services::notes::default_store;
 use super::engine::SyncEngine;
 use super::oss::{OssClient, OssConfig};
 use super::state::SyncStateManager;
+use crate::services::notes::default_store;
 
 const INITIAL_DELAY: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_secs(30);
@@ -148,8 +148,8 @@ fn run_sync_internal(
         .build()?
         .block_on(async {
             // Get AccessKeySecret from keyring
-            let access_key_secret = get_oss_credential(&config.oss_access_key_id)
-                .unwrap_or_default();
+            let access_key_secret =
+                get_oss_credential(&config.oss_access_key_id).unwrap_or_default();
 
             let oss_config = OssConfig {
                 endpoint: config.oss_endpoint.clone(),
@@ -161,8 +161,7 @@ fn run_sync_internal(
             let client = OssClient::new(oss_config)
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
 
-            let store = default_store()
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            let store = default_store().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
 
             let state_manager = SyncStateManager::new(&store.base_dir);
 
@@ -216,8 +215,8 @@ fn get_oss_credential(access_key_id: &str) -> Option<String> {
 }
 
 pub fn save_oss_credential(access_key_id: &str, secret: &str) -> Result<(), String> {
-    let entry = keyring::Entry::new("floral-notepaper-oss", access_key_id)
-        .map_err(|e| e.to_string())?;
+    let entry =
+        keyring::Entry::new("floral-notepaper-oss", access_key_id).map_err(|e| e.to_string())?;
     entry.set_password(secret).map_err(|e| e.to_string())
 }
 
@@ -225,7 +224,7 @@ pub fn get_oss_credential_public(access_key_id: &str) -> Result<String, String> 
     if access_key_id.is_empty() {
         return Err("Access Key ID is empty".to_string());
     }
-    let entry = keyring::Entry::new("floral-notepaper-oss", access_key_id)
-        .map_err(|e| e.to_string())?;
+    let entry =
+        keyring::Entry::new("floral-notepaper-oss", access_key_id).map_err(|e| e.to_string())?;
     entry.get_password().map_err(|e| e.to_string())
 }

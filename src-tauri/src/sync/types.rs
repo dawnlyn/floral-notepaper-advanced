@@ -106,15 +106,23 @@ pub struct NoteSyncRecord {
 }
 
 pub enum SyncAction {
-    Upload { note_id: String },
-    Download { note_id: String },
+    Upload {
+        note_id: String,
+    },
+    Download {
+        note_id: String,
+    },
     Conflict {
         note_id: String,
         local_updated: DateTime<Utc>,
         remote_updated: DateTime<Utc>,
     },
-    DeleteLocal { note_id: String },
-    Skip { note_id: String },
+    DeleteLocal {
+        note_id: String,
+    },
+    Skip {
+        note_id: String,
+    },
 }
 
 #[derive(Debug, Clone)]

@@ -2,13 +2,13 @@ use chrono::Utc;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
-use crate::services::notes::{NoteStore, NoteMetadata};
 use super::oss::OssClient;
 use super::state::SyncStateManager;
 use super::types::{
     NoteSyncRecord, RemoteNoteEntry, SyncAction, SyncConflictDto, SyncError, SyncManifest,
     SyncResultDto,
 };
+use crate::services::notes::{NoteMetadata, NoteStore};
 
 pub struct SyncEngine<'a> {
     client: &'a OssClient,
@@ -234,7 +234,9 @@ impl<'a> SyncEngine<'a> {
         // Notes only in local -> upload
         for (id, _local) in &local_map {
             if !remote_map.contains_key(id) {
-                actions.push(SyncAction::Upload { note_id: id.clone() });
+                actions.push(SyncAction::Upload {
+                    note_id: id.clone(),
+                });
             }
         }
 
@@ -257,11 +259,15 @@ impl<'a> SyncEngine<'a> {
                 let local_hash = Self::compute_content_hash(&local_content);
 
                 if local_hash == remote.content_hash {
-                    actions.push(SyncAction::Skip { note_id: id.clone() });
+                    actions.push(SyncAction::Skip {
+                        note_id: id.clone(),
+                    });
                 } else {
                     match self.strategy.as_str() {
                         "localWins" => {
-                            actions.push(SyncAction::Upload { note_id: id.clone() });
+                            actions.push(SyncAction::Upload {
+                                note_id: id.clone(),
+                            });
                         }
                         "remoteWins" => {
                             actions.push(SyncAction::Download {
@@ -276,7 +282,9 @@ impl<'a> SyncEngine<'a> {
                             });
                         }
                         _ => {
-                            actions.push(SyncAction::Upload { note_id: id.clone() });
+                            actions.push(SyncAction::Upload {
+                                note_id: id.clone(),
+                            });
                         }
                     }
                 }
@@ -304,7 +312,8 @@ impl<'a> SyncEngine<'a> {
             .await?;
 
         // Upload metadata
-        let meta = serde_json::to_vec_pretty(&note).map_err(|e| SyncError::new("json", e.to_string()))?;
+        let meta =
+            serde_json::to_vec_pretty(&note).map_err(|e| SyncError::new("json", e.to_string()))?;
         self.client
             .put_object(&self.note_meta_key(note_id), meta, "application/json")
             .await?;
@@ -332,10 +341,15 @@ impl<'a> SyncEngine<'a> {
             .notes
             .iter()
             .find(|e| e.id == note_id)
-            .ok_or_else(|| SyncError::new("sync", format!("Note {} not found in remote", note_id)))?;
+            .ok_or_else(|| {
+                SyncError::new("sync", format!("Note {} not found in remote", note_id))
+            })?;
 
         // Download content
-        let content_bytes = self.client.get_object(&self.note_content_key(note_id)).await?;
+        let content_bytes = self
+            .client
+            .get_object(&self.note_content_key(note_id))
+            .await?;
         let content = String::from_utf8(content_bytes)
             .map_err(|e| SyncError::new("encoding", e.to_string()))?;
 

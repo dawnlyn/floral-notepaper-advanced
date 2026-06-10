@@ -40,7 +40,10 @@ impl OssClient {
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()?;
-        Ok(Self { config, http_client })
+        Ok(Self {
+            config,
+            http_client,
+        })
     }
 
     fn object_url(&self, key: &str) -> String {
