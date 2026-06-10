@@ -2,6 +2,7 @@ pub mod desktop;
 pub mod json_io;
 pub mod locales;
 pub mod services;
+pub mod sync;
 pub mod updater;
 
 use locales::Locale;
@@ -403,6 +404,7 @@ pub fn run() {
             }
             app.manage(updater_state);
             updater::start_auto_check_scheduler(app.handle().clone());
+            sync::start_sync_scheduler(app.handle().clone());
             desktop::setup_desktop(app)?;
             Ok(())
         })
@@ -450,7 +452,13 @@ pub fn run() {
             updater::commands::update_install,
             updater::commands::update_install_prepare_report,
             updater::commands::update_cancel,
-            take_startup_file
+            take_startup_file,
+            sync::sync_now_command,
+            sync::sync_status_command,
+            sync::oss_test_connection_command,
+            sync::oss_save_credential_command,
+            sync::oss_get_credential_command,
+            sync::sync_get_cloud_status_command
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

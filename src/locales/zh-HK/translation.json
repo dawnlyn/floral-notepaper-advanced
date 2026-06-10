@@ -54,7 +54,12 @@
     "unsupportedFile": "僅支援匯入 .md 檔案",
     "unsupportedImageFormat": "不支援的圖片格式",
     "unsupportedShortcut": "{{field}} 配置無效",
-    "unsupportedShortcutGeneric": "快捷鍵配置無效"
+    "unsupportedShortcutGeneric": "快捷鍵配置無效",
+    "ossConnectionFailed": "OSS 連接失敗",
+    "ossBucketNotFound": "Bucket 不存在或無權限存取",
+    "ossAuthFailed": "OSS 驗證失敗，請檢查 Access Key",
+    "syncInProgress": "同步正在進行中",
+    "syncConfigIncomplete": "請先完成 OSS 配置"
   },
   "markdown": {
     "copied": "已複製",
@@ -407,6 +412,67 @@
         "contain": "完整",
         "repeat": "平鋪"
       }
+    },
+    "cloud": {
+      "title": "雲同步",
+      "provider": {
+        "label": "服務供應商",
+        "aliyunOss": "阿里雲 OSS"
+      },
+      "endpoint": "Endpoint",
+      "bucket": "Bucket",
+      "accessKeyId": "Access Key ID",
+      "accessKeySecret": "Access Key Secret",
+      "showSecret": "顯示密鑰",
+      "hideSecret": "隱藏密鑰",
+      "remotePrefix": "遠端路徑前綴（可選）",
+      "remotePrefixHint": "例如：floral-notepaper/",
+      "testConnection": "測試連線",
+      "testing": "正在測試...",
+      "connectionSuccess": "連線成功",
+      "connectionFailed": "連線失敗：{{message}}",
+      "notConfigured": "未配置"
+    },
+    "sync": {
+      "title": "同步設定",
+      "onStartup": "啟動時同步",
+      "interval": {
+        "label": "同步間隔",
+        "off": "關閉",
+        "1min": "1 分鐘",
+        "3min": "3 分鐘",
+        "5min": "5 分鐘",
+        "10min": "10 分鐘",
+        "30min": "30 分鐘",
+        "1hour": "1 小時",
+        "daily": "每天 0 點"
+      },
+      "strategy": {
+        "label": "同步策略",
+        "localWins": "本地覆蓋伺服器",
+        "remoteWins": "伺服器覆蓋本地",
+        "manual": "手動解決衝突"
+      },
+      "strategyHint": "修改策略將在下一次同步時生效",
+      "lastSynced": "上次同步：{{time}}",
+      "neverSynced": "從未同步",
+      "syncNow": "立即同步",
+      "syncing": "正在同步...",
+      "syncComplete": "同步完成：上傳 {{uploaded}} 篇，下載 {{downloaded}} 篇",
+      "syncError": "同步失敗：{{message}}",
+      "conflicts": "{{count}} 個衝突需要處理"
+    }
+  },
+  "sync": {
+    "cloudIcon": {
+      "tooltip": "已同步到雲端",
+      "notSynced": "未同步"
+    },
+    "status": {
+      "idle": "空閒",
+      "syncing": "同步中",
+      "completed": "已完成",
+      "error": "同步出錯"
     }
   },
   "tile": {

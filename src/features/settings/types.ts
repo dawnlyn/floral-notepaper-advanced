@@ -5,6 +5,20 @@ export type ThemeOption = "light" | "dark" | "system";
 export type TileColorMode = "system" | "custom";
 export type BackgroundFit = "cover" | "contain" | "repeat";
 
+export type OssProvider = "aliyun-oss" | "";
+
+export type SyncInterval =
+  | "off"
+  | "1min"
+  | "3min"
+  | "5min"
+  | "10min"
+  | "30min"
+  | "1hour"
+  | "daily";
+
+export type SyncStrategy = "localWins" | "remoteWins" | "manual";
+
 export interface AppConfig {
   locale: string;
   notesDir: string;
@@ -36,4 +50,16 @@ export interface AppConfig {
   backgroundScale?: number;
   backgroundPositionX?: number;
   backgroundPositionY?: number;
+
+  // OSS 云同步配置
+  ossProvider: OssProvider;
+  ossEndpoint: string;
+  ossBucket: string;
+  ossAccessKeyId: string;
+  ossRemotePrefix: string;
+
+  // 同步设置
+  syncOnStartup: boolean;
+  syncInterval: SyncInterval;
+  syncStrategy: SyncStrategy;
 }

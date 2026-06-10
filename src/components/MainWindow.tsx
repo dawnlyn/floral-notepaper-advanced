@@ -67,6 +67,8 @@ import {
   type NoteContextMenuAction,
 } from "../features/notes/noteContextMenu";
 import { openNotepadWindow, takeStartupFile, toggleTileWindow } from "../features/windows/api";
+import { getNotesCloudStatus } from "../features/sync/api";
+import type { NoteCloudStatus } from "../features/sync/types";
 import {
   closeCurrentWindow,
   minimizeCurrentWindow,
@@ -320,6 +322,10 @@ export function MainWindow({
     createAboutUpdateReminderState(null),
   );
   const [settingsConfig, setSettingsConfig] = useState<AppConfig | null>(initialConfig ?? null);
+  const [draftConfig, setDraftConfig] = useState<AppConfig | null>(
+    initialSettingsOpen && initialConfig ? { ...initialConfig } : null,
+  );
+  const [cloudStatusMap, setCloudStatusMap] = useState<Record<string, boolean>>({});
   const [savedNotesDir, setSavedNotesDir] = useState<string | null>(
     initialConfig?.notesDir ?? null,
   );
@@ -822,6 +828,27 @@ export function MainWindow({
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
+  // Load cloud sync status and listen for updates
+  const refreshCloudStatus = useCallback(() => {
+    getNotesCloudStatus()
+      .then((statuses) => {
+        const map: Record<string, boolean> = {};
+        for (const s of statuses) {
+          if (s.synced) map[s.noteId] = true;
+        }
+        setCloudStatusMap(map);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    refreshCloudStatus();
+    const unlisten = listen("sync-completed", () => refreshCloudStatus());
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, [refreshCloudStatus]);
+
   useEffect(() => {
     const unlisten = listen<string>("open-external-file", (event) => {
       void loadExternalFile(event.payload);
@@ -1107,80 +1134,103 @@ export function MainWindow({
   const handleOpenSettings = async () => {
     if (settingsOpen) {
       setSettingsOpen(false);
+      setDraftConfig(null);
       return;
     }
     setSettingsOpen(true);
     setAboutOpen(false);
-    if (settingsConfig) return;
+    if (draftConfig) return;
     try {
-      const config = await getConfig();
-      setSettingsConfig(config);
-      setSavedNotesDir(config.notesDir);
-      setViewMode(normalizeViewMode(config.defaultViewMode));
+      const config = settingsConfig ?? await getConfig();
+      if (!settingsConfig) {
+        setSettingsConfig(config);
+        setSavedNotesDir(config.notesDir);
+        setViewMode(normalizeViewMode(config.defaultViewMode));
+      }
+      setDraftConfig({ ...config });
     } catch (error) {
       showToast(getErrorMessage(error));
     }
   };
 
   const handleChooseNotesDir = async () => {
-    if (!settingsConfig) return;
+    if (!draftConfig) return;
     try {
       const notesDir = await chooseNotesDirectory();
       if (!notesDir) return;
-      handleSettingsChange({ ...settingsConfig, notesDir });
+      setDraftConfig({ ...draftConfig, notesDir });
     } catch (error) {
       showToast(getErrorMessage(error));
     }
   };
 
-  const settingsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const persistSettings = useCallback(
-    (nextConfig: AppConfig) => {
-      if (settingsSaveTimer.current) {
-        clearTimeout(settingsSaveTimer.current);
+  const handleDraftChange = useCallback(
+    (nextDraft: AppConfig) => {
+      setDraftConfig(nextDraft);
+      // Theme preview is instant: apply as user edits
+      if (nextDraft.theme !== draftConfig?.theme) {
+        import("../features/settings/theme").then(({ applyTheme, watchSystemTheme }) => {
+          applyTheme(nextDraft.theme);
+          watchSystemTheme(nextDraft.theme);
+        });
       }
-      settingsSaveTimer.current = setTimeout(async () => {
-        const previousNotesDir = savedNotesDir ?? nextConfig.notesDir;
-        const normalizedConfig = {
-          ...nextConfig,
-          defaultViewMode: normalizeViewMode(nextConfig.defaultViewMode),
-          tileColor: normalizeTileColor(nextConfig.tileColor),
-        };
-        try {
-          const savedConfig = await saveConfig(normalizedConfig);
-          setSettingsConfig(savedConfig);
-          setSavedNotesDir(savedConfig.notesDir);
-          setViewMode(normalizeViewMode(savedConfig.defaultViewMode));
+    },
+    [draftConfig],
+  );
 
-          if (savedConfig.notesDir !== previousNotesDir) {
-            const loadedNotes = await refreshNotes();
-            if (loadedNotes[0]) {
-              await loadNote(loadedNotes[0].id);
-            } else {
-              clearCurrentNote();
-            }
-          }
-        } catch (error) {
-          showToast(getErrorMessage(error));
+  const handleSaveSettings = useCallback(async () => {
+    if (!draftConfig) return;
+    const previousNotesDir = savedNotesDir ?? draftConfig.notesDir;
+    const normalizedConfig = {
+      ...draftConfig,
+      defaultViewMode: normalizeViewMode(draftConfig.defaultViewMode),
+      tileColor: normalizeTileColor(draftConfig.tileColor),
+    };
+    try {
+      const saved = await saveConfig(normalizedConfig);
+      setSettingsConfig(saved);
+      setDraftConfig(null);
+      setSavedNotesDir(saved.notesDir);
+      setViewMode(normalizeViewMode(saved.defaultViewMode));
+      void emit("config-changed", saved);
+
+      if (saved.notesDir !== previousNotesDir) {
+        const loadedNotes = await refreshNotes();
+        if (loadedNotes[0]) {
+          await loadNote(loadedNotes[0].id);
+        } else {
+          clearCurrentNote();
         }
-      }, 300);
-    },
-    [savedNotesDir, refreshNotes, loadNote, clearCurrentNote],
-  );
+      }
+      setSettingsOpen(false);
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  }, [draftConfig, savedNotesDir, refreshNotes, loadNote, clearCurrentNote]);
 
-  const handleSettingsChange = useCallback(
-    (nextConfig: AppConfig) => {
-      setSettingsConfig(nextConfig);
-      void emit("config-changed", nextConfig);
-      persistSettings(nextConfig);
-    },
-    [persistSettings],
-  );
+  const handleCancelSettings = useCallback(() => {
+    // Restore theme to saved state
+    if (settingsConfig && draftConfig && settingsConfig.theme !== draftConfig.theme) {
+      import("../features/settings/theme").then(({ applyTheme, watchSystemTheme }) => {
+        applyTheme(settingsConfig.theme);
+        watchSystemTheme(settingsConfig.theme);
+      });
+    }
+    setDraftConfig(null);
+    setSettingsOpen(false);
+  }, [settingsConfig, draftConfig]);
 
   const handleCloseSettings = useCallback(() => {
+    // Close button in panel header acts as cancel
+    if (settingsConfig && draftConfig && settingsConfig.theme !== draftConfig.theme) {
+      import("../features/settings/theme").then(({ applyTheme, watchSystemTheme }) => {
+        applyTheme(settingsConfig.theme);
+        watchSystemTheme(settingsConfig.theme);
+      });
+    }
+    setDraftConfig(null);
     setSettingsOpen(false);
-  }, []);
+  }, [settingsConfig, draftConfig]);
 
   const handleOpenAbout = useCallback(() => {
     setAboutOpen((open) => {
@@ -2104,6 +2154,18 @@ export function MainWindow({
                                       defaultValue: "{{count}} 字",
                                     })}
                                   </span>
+                                  {cloudStatusMap[note.id] && (
+                                    <svg
+                                      className="ml-auto text-bamboo/70 shrink-0"
+                                      width="12"
+                                      height="12"
+                                      viewBox="0 0 24 24"
+                                      fill="currentColor"
+                                      title={t("sync.cloudIcon.tooltip", { defaultValue: "已同步到云端" })}
+                                    >
+                                      <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" />
+                                    </svg>
+                                  )}
                                 </div>
                               </div>
                             );
@@ -2285,6 +2347,18 @@ export function MainWindow({
                                           defaultValue: "{{count}} 字",
                                         })}
                                       </span>
+                                      {cloudStatusMap[note.id] && (
+                                        <svg
+                                          className="ml-auto text-bamboo/70 shrink-0"
+                                          width="12"
+                                          height="12"
+                                          viewBox="0 0 24 24"
+                                          fill="currentColor"
+                                          title={t("sync.cloudIcon.tooltip", { defaultValue: "已同步到云端" })}
+                                        >
+                                          <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" />
+                                        </svg>
+                                      )}
                                     </div>
                                   </div>
                                 );
@@ -2736,12 +2810,15 @@ export function MainWindow({
                   : "pointer-events-none translate-x-4 opacity-0"
               }`}
             >
-              {mountedSidePanel === "settings" && settingsConfig ? (
+              {mountedSidePanel === "settings" && draftConfig ? (
                 <SettingsPanel
-                  config={settingsConfig}
-                  onChange={handleSettingsChange}
+                  config={draftConfig}
+                  onChange={handleDraftChange}
                   onChooseNotesDir={() => void handleChooseNotesDir()}
                   onClose={handleCloseSettings}
+                  onSave={() => void handleSaveSettings()}
+                  onCancel={handleCancelSettings}
+                  savedConfig={settingsConfig}
                 />
               ) : null}
             </div>

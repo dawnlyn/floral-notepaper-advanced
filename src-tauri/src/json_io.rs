@@ -1,11 +1,16 @@
 use crate::services::notes::AppError;
-use serde::Serialize;
+use serde::{de::DeserializeOwned, Serialize};
 use std::{
     fs,
     fs::OpenOptions,
     io::Write,
     path::{Path, PathBuf},
 };
+
+pub fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
+    let data = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&data).ok()
+}
 
 pub fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), AppError> {
     if let Some(parent) = path.parent() {

@@ -1,15 +1,27 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { showToast } from "./Toast";
 import { checkGlobalShortcut, chooseBackgroundImage } from "../features/settings/api";
 import { UpdateSettingsSection } from "../features/update/UpdateSettingsSection";
 import type {
   AppConfig,
   BackgroundFit,
+  OssProvider,
+  SyncInterval,
+  SyncStrategy,
   ThemeOption,
   TileColorMode,
   ViewMode,
 } from "../features/settings/types";
+import {
+  getOssCredential,
+  getSyncStatus,
+  saveOssCredential,
+  syncNow,
+  testOssConnection,
+} from "../features/sync/api";
+import type { SyncStatusDto } from "../features/sync/types";
 import {
   formatHeldKeys,
   hotkeyToConfigString,
@@ -29,10 +41,104 @@ interface SettingsPanelProps {
   onChange: (config: AppConfig) => void;
   onChooseNotesDir: () => void;
   onClose: () => void;
+  onSave: () => void;
+  onCancel: () => void;
+  savedConfig: AppConfig | null;
 }
 
-export function SettingsPanel({ config, onChange, onChooseNotesDir, onClose }: SettingsPanelProps) {
+export function SettingsPanel({ config, onChange, onChooseNotesDir, onClose, onSave, onCancel, savedConfig }: SettingsPanelProps) {
   const { t } = useTranslation();
+
+  // Dirty detection
+  const hasChanges = useMemo(() => {
+    if (!savedConfig) return false;
+    return JSON.stringify(config) !== JSON.stringify(savedConfig);
+  }, [config, savedConfig]);
+
+  // OSS credential state (secret stored separately in keyring)
+  const [ossSecret, setOssSecret] = useState("");
+  const [showSecret, setShowSecret] = useState(false);
+  const [ossTestState, setOssTestState] = useState<"idle" | "testing" | "success" | "error">("idle");
+  const [ossTestMsg, setOssTestMsg] = useState("");
+  const ossSecretLoaded = useRef(false);
+
+  // Sync status state
+  const [syncStatus, setSyncStatus] = useState<SyncStatusDto | null>(null);
+  const [syncing, setSyncing] = useState(false);
+
+  // Load OSS credential from keyring when accessKeyId changes
+  useEffect(() => {
+    if (!config.ossAccessKeyId) {
+      setOssSecret("");
+      ossSecretLoaded.current = false;
+      return;
+    }
+    if (ossSecretLoaded.current) return;
+    ossSecretLoaded.current = true;
+    getOssCredential(config.ossAccessKeyId)
+      .then((secret) => setOssSecret(secret ?? ""))
+      .catch(() => setOssSecret(""));
+  }, [config.ossAccessKeyId]);
+
+  // Load sync status on mount
+  useEffect(() => {
+    getSyncStatus()
+      .then(setSyncStatus)
+      .catch(() => {});
+  }, []);
+
+  const handleTestConnection = useCallback(async () => {
+    setOssTestState("testing");
+    setOssTestMsg("");
+    try {
+      await testOssConnection(
+        config.ossEndpoint,
+        config.ossBucket,
+        config.ossAccessKeyId,
+        ossSecret,
+      );
+      setOssTestState("success");
+      setOssTestMsg(t("settings.cloud.connectionSuccess", { defaultValue: "连接成功" }));
+    } catch (error) {
+      setOssTestState("error");
+      setOssTestMsg(
+        t("settings.cloud.connectionFailed", {
+          message: error instanceof Error ? error.message : String(error),
+          defaultValue: "连接失败",
+        }),
+      );
+    }
+  }, [config.ossEndpoint, config.ossBucket, config.ossAccessKeyId, ossSecret, t]);
+
+  const handleSyncNow = useCallback(async () => {
+    setSyncing(true);
+    try {
+      // Save credential first if configured
+      if (config.ossAccessKeyId && ossSecret) {
+        await saveOssCredential(config.ossAccessKeyId, ossSecret);
+      }
+      const result = await syncNow();
+      showToast(
+        t("settings.sync.syncComplete", {
+          uploaded: result.uploaded,
+          downloaded: result.downloaded,
+          defaultValue: `同步完成：上传 ${result.uploaded} 篇，下载 ${result.downloaded} 篇`,
+        }),
+      );
+      const status = await getSyncStatus();
+      setSyncStatus(status);
+    } catch (error) {
+      showToast(
+        t("settings.sync.syncError", {
+          message: error instanceof Error ? error.message : String(error),
+          defaultValue: "同步失败",
+        }),
+      );
+    } finally {
+      setSyncing(false);
+    }
+  }, [config.ossAccessKeyId, ossSecret, t]);
+
   const setConfigValue = <Key extends keyof AppConfig>(key: Key, value: AppConfig[Key]) => {
     onChange({ ...config, [key]: value });
   };
@@ -442,6 +548,159 @@ export function SettingsPanel({ config, onChange, onChooseNotesDir, onClose }: S
           />
         </section>
 
+        {/* 云同步配置 */}
+        <section className="space-y-2">
+          <h3 className="text-[12px] font-display font-medium text-ink-soft">
+            {t("settings.cloud.title", { defaultValue: "云同步" })}
+          </h3>
+          <label className="block text-[11px] font-body text-ink-faint">
+            {t("settings.cloud.provider.label", { defaultValue: "服务提供商" })}
+          </label>
+          <select
+            value={config.ossProvider || ""}
+            onChange={(e) => setConfigValue("ossProvider", e.target.value as OssProvider)}
+            className="w-full h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[12px] text-ink-soft outline-none cursor-pointer"
+          >
+            <option value="">{t("settings.cloud.notConfigured", { defaultValue: "未配置" })}</option>
+            <option value="aliyun-oss">{t("settings.cloud.provider.aliyunOss", { defaultValue: "阿里云 OSS" })}</option>
+          </select>
+
+          {config.ossProvider === "aliyun-oss" && (
+            <>
+              <input
+                type="text"
+                value={config.ossEndpoint}
+                onChange={(e) => setConfigValue("ossEndpoint", e.target.value)}
+                placeholder={t("settings.cloud.endpoint", { defaultValue: "Endpoint" })}
+                className="w-full h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[12px] text-ink-soft outline-none"
+              />
+              <input
+                type="text"
+                value={config.ossBucket}
+                onChange={(e) => setConfigValue("ossBucket", e.target.value)}
+                placeholder={t("settings.cloud.bucket", { defaultValue: "Bucket" })}
+                className="w-full h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[12px] text-ink-soft outline-none"
+              />
+              <input
+                type="text"
+                value={config.ossAccessKeyId}
+                onChange={(e) => {
+                  setConfigValue("ossAccessKeyId", e.target.value);
+                  ossSecretLoaded.current = false;
+                }}
+                placeholder={t("settings.cloud.accessKeyId", { defaultValue: "Access Key ID" })}
+                className="w-full h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[12px] font-mono text-ink-soft outline-none"
+              />
+              <div className="flex gap-2">
+                <input
+                  type={showSecret ? "text" : "password"}
+                  value={ossSecret}
+                  onChange={(e) => setOssSecret(e.target.value)}
+                  placeholder={t("settings.cloud.accessKeySecret", { defaultValue: "Access Key Secret" })}
+                  className="min-w-0 flex-1 h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[12px] font-mono text-ink-soft outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowSecret(!showSecret)}
+                  className="h-8 px-2.5 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  {showSecret
+                    ? t("settings.cloud.hideSecret", { defaultValue: "隐藏密钥" })
+                    : t("settings.cloud.showSecret", { defaultValue: "显示密钥" })}
+                </button>
+              </div>
+              <input
+                type="text"
+                value={config.ossRemotePrefix}
+                onChange={(e) => setConfigValue("ossRemotePrefix", e.target.value)}
+                placeholder={t("settings.cloud.remotePrefix", { defaultValue: "远程路径前缀（可选）" })}
+                className="w-full h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[12px] font-mono text-ink-soft outline-none"
+              />
+              <p className="text-[10px] text-ink-ghost/60 px-0.5">
+                {t("settings.cloud.remotePrefixHint", { defaultValue: "例如：floral-notepaper/" })}
+              </p>
+              <button
+                type="button"
+                onClick={handleTestConnection}
+                disabled={ossTestState === "testing" || !config.ossEndpoint || !config.ossBucket || !config.ossAccessKeyId}
+                className="h-8 px-3 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                {ossTestState === "testing"
+                  ? t("settings.cloud.testing", { defaultValue: "正在测试..." })
+                  : t("settings.cloud.testConnection", { defaultValue: "测试连接" })}
+              </button>
+              {ossTestState !== "idle" && ossTestState !== "testing" && (
+                <p className={`text-[11px] ${ossTestState === "success" ? "text-bamboo" : "text-red-400"}`}>
+                  {ossTestMsg}
+                </p>
+              )}
+            </>
+          )}
+        </section>
+
+        {/* 同步设置 */}
+        {config.ossProvider && (
+          <section className="space-y-2">
+            <h3 className="text-[12px] font-display font-medium text-ink-soft">
+              {t("settings.sync.title", { defaultValue: "同步设置" })}
+            </h3>
+            <ToggleRow
+              label={t("settings.sync.onStartup", { defaultValue: "启动时同步" })}
+              checked={config.syncOnStartup}
+              onChange={(checked) => setConfigValue("syncOnStartup", checked)}
+            />
+            <label className="block text-[11px] font-body text-ink-faint">
+              {t("settings.sync.interval.label", { defaultValue: "同步间隔" })}
+            </label>
+            <select
+              value={config.syncInterval}
+              onChange={(e) => setConfigValue("syncInterval", e.target.value as SyncInterval)}
+              className="w-full h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[12px] text-ink-soft outline-none cursor-pointer"
+            >
+              {(["off", "1min", "3min", "5min", "10min", "30min", "1hour", "daily"] as SyncInterval[]).map((v) => (
+                <option key={v} value={v}>
+                  {t(`settings.sync.interval.${v.replace(/[^a-z0-9]/gi, "")}`, { defaultValue: v })}
+                </option>
+              ))}
+            </select>
+            <label className="block text-[11px] font-body text-ink-faint">
+              {t("settings.sync.strategy.label", { defaultValue: "同步策略" })}
+            </label>
+            <select
+              value={config.syncStrategy}
+              onChange={(e) => setConfigValue("syncStrategy", e.target.value as SyncStrategy)}
+              className="w-full h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[12px] text-ink-soft outline-none cursor-pointer"
+            >
+              <option value="localWins">{t("settings.sync.strategy.localWins", { defaultValue: "本地覆盖服务端" })}</option>
+              <option value="remoteWins">{t("settings.sync.strategy.remoteWins", { defaultValue: "服务端覆盖本地" })}</option>
+              <option value="manual">{t("settings.sync.strategy.manual", { defaultValue: "手动解决冲突" })}</option>
+            </select>
+            <p className="text-[10px] text-ink-ghost/60 px-0.5">
+              {t("settings.sync.strategyHint", { defaultValue: "修改策略将在下一次同步时生效" })}
+            </p>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-ink-faint">
+                {syncStatus?.lastSyncedAt
+                  ? t("settings.sync.lastSynced", {
+                      time: new Date(syncStatus.lastSyncedAt).toLocaleString(),
+                      defaultValue: `上次同步：${new Date(syncStatus.lastSyncedAt).toLocaleString()}`,
+                    })
+                  : t("settings.sync.neverSynced", { defaultValue: "从未同步" })}
+              </span>
+              <button
+                type="button"
+                onClick={handleSyncNow}
+                disabled={syncing}
+                className="h-8 px-3 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                {syncing
+                  ? t("settings.sync.syncing", { defaultValue: "正在同步..." })
+                  : t("settings.sync.syncNow", { defaultValue: "立即同步" })}
+              </button>
+            </div>
+          </section>
+        )}
+
         <UpdateSettingsSection mode="settingsOnly" />
 
         <section className="pt-2 border-t border-paper-deep/25">
@@ -462,6 +721,32 @@ export function SettingsPanel({ config, onChange, onChooseNotesDir, onClose }: S
             </a>
           </p>
         </section>
+      </div>
+
+      {/* Save / Cancel action bar */}
+      <div className="shrink-0 flex items-center justify-end gap-2 px-4 py-2.5 border-t border-paper-deep/25 bg-cloud/80">
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={!hasChanges}
+          className="h-8 px-4 rounded-lg border border-paper-deep/45 text-[12px] text-ink-faint hover:text-ink-soft hover:bg-paper-warm disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+        >
+          {t("common.cancel", { defaultValue: "取消" })}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            // Save OSS credential to keyring before persisting config
+            if (config.ossProvider === "aliyun-oss" && config.ossAccessKeyId && ossSecret) {
+              saveOssCredential(config.ossAccessKeyId, ossSecret).catch(() => {});
+            }
+            onSave();
+          }}
+          disabled={!hasChanges}
+          className="h-8 px-4 rounded-lg bg-bamboo text-white text-[12px] font-medium hover:bg-bamboo/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+        >
+          {t("common.save", { defaultValue: "保存" })}
+        </button>
       </div>
     </aside>
   );

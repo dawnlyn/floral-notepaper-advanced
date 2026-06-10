@@ -80,6 +80,26 @@ pub struct AppConfig {
     pub last_known_base_dir: Option<String>,
     #[serde(default = "default_open_at_cursor")]
     pub open_at_cursor: bool,
+
+    // OSS 云同步配置
+    #[serde(default)]
+    pub oss_provider: String,
+    #[serde(default)]
+    pub oss_endpoint: String,
+    #[serde(default)]
+    pub oss_bucket: String,
+    #[serde(default)]
+    pub oss_access_key_id: String,
+    #[serde(default)]
+    pub oss_remote_prefix: String,
+
+    // 同步设置
+    #[serde(default)]
+    pub sync_on_startup: bool,
+    #[serde(default)]
+    pub sync_interval: String,
+    #[serde(default = "default_sync_strategy")]
+    pub sync_strategy: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -826,6 +846,14 @@ impl NoteStore {
             toggle_visibility_shortcut: default_toggle_visibility_shortcut(),
             last_known_base_dir: Some(self.base_dir.to_string_lossy().to_string()),
             open_at_cursor: default_open_at_cursor(),
+            oss_provider: String::new(),
+            oss_endpoint: String::new(),
+            oss_bucket: String::new(),
+            oss_access_key_id: String::new(),
+            oss_remote_prefix: String::new(),
+            sync_on_startup: false,
+            sync_interval: "off".into(),
+            sync_strategy: default_sync_strategy(),
         }
     }
 
@@ -1239,6 +1267,10 @@ fn default_toggle_visibility_shortcut() -> String {
 
 fn default_open_at_cursor() -> bool {
     true
+}
+
+fn default_sync_strategy() -> String {
+    "localWins".into()
 }
 
 fn default_locale() -> String {

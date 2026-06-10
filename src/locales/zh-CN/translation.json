@@ -54,7 +54,12 @@
     "unsupportedFile": "只支持导入 .md 文件",
     "unsupportedImageFormat": "不支持的图片格式",
     "unsupportedShortcut": "{{field}} 配置无效",
-    "unsupportedShortcutGeneric": "快捷键配置无效"
+    "unsupportedShortcutGeneric": "快捷键配置无效",
+    "ossConnectionFailed": "OSS 连接失败",
+    "ossBucketNotFound": "Bucket 不存在或无权限访问",
+    "ossAuthFailed": "OSS 认证失败，请检查 Access Key",
+    "syncInProgress": "同步正在进行中",
+    "syncConfigIncomplete": "请先完成 OSS 配置"
   },
   "markdown": {
     "copied": "已复制",
@@ -426,6 +431,67 @@
         "contain": "完整",
         "repeat": "平铺"
       }
+    },
+    "cloud": {
+      "title": "云同步",
+      "provider": {
+        "label": "服务提供商",
+        "aliyunOss": "阿里云 OSS"
+      },
+      "endpoint": "Endpoint",
+      "bucket": "Bucket",
+      "accessKeyId": "Access Key ID",
+      "accessKeySecret": "Access Key Secret",
+      "showSecret": "显示密钥",
+      "hideSecret": "隐藏密钥",
+      "remotePrefix": "远程路径前缀（可选）",
+      "remotePrefixHint": "例如：floral-notepaper/",
+      "testConnection": "测试连接",
+      "testing": "正在测试...",
+      "connectionSuccess": "连接成功",
+      "connectionFailed": "连接失败：{{message}}",
+      "notConfigured": "未配置"
+    },
+    "sync": {
+      "title": "同步设置",
+      "onStartup": "启动时同步",
+      "interval": {
+        "label": "同步间隔",
+        "off": "关闭",
+        "1min": "1 分钟",
+        "3min": "3 分钟",
+        "5min": "5 分钟",
+        "10min": "10 分钟",
+        "30min": "30 分钟",
+        "1hour": "1 小时",
+        "daily": "每天 0 点"
+      },
+      "strategy": {
+        "label": "同步策略",
+        "localWins": "本地覆盖服务端",
+        "remoteWins": "服务端覆盖本地",
+        "manual": "手动解决冲突"
+      },
+      "strategyHint": "修改策略将在下一次同步时生效",
+      "lastSynced": "上次同步：{{time}}",
+      "neverSynced": "从未同步",
+      "syncNow": "立即同步",
+      "syncing": "正在同步...",
+      "syncComplete": "同步完成：上传 {{uploaded}} 篇，下载 {{downloaded}} 篇",
+      "syncError": "同步失败：{{message}}",
+      "conflicts": "{{count}} 个冲突需要处理"
+    }
+  },
+  "sync": {
+    "cloudIcon": {
+      "tooltip": "已同步到云端",
+      "notSynced": "未同步"
+    },
+    "status": {
+      "idle": "空闲",
+      "syncing": "同步中",
+      "completed": "已完成",
+      "error": "同步出错"
     }
   },
   "tile": {

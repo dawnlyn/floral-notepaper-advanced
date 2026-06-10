@@ -483,6 +483,7 @@ pub struct RuntimeConfigChanges {
     pub autostart_changed: bool,
     pub global_shortcut_changed: bool,
     pub toggle_visibility_shortcut_changed: bool,
+    pub sync_settings_changed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1004,6 +1005,13 @@ pub fn runtime_config_changes(previous: &AppConfig, next: &AppConfig) -> Runtime
         global_shortcut_changed: previous.global_shortcut != next.global_shortcut,
         toggle_visibility_shortcut_changed: previous.toggle_visibility_shortcut
             != next.toggle_visibility_shortcut,
+        sync_settings_changed: previous.sync_on_startup != next.sync_on_startup
+            || previous.sync_interval != next.sync_interval
+            || previous.sync_strategy != next.sync_strategy
+            || previous.oss_provider != next.oss_provider
+            || previous.oss_endpoint != next.oss_endpoint
+            || previous.oss_bucket != next.oss_bucket
+            || previous.oss_access_key_id != next.oss_access_key_id,
     }
 }
 
@@ -2632,6 +2640,14 @@ mod tests {
             surface_height: None,
             toggle_visibility_shortcut: String::new(),
             last_known_base_dir: None,
+            oss_provider: String::new(),
+            oss_endpoint: String::new(),
+            oss_bucket: String::new(),
+            oss_access_key_id: String::new(),
+            oss_remote_prefix: String::new(),
+            sync_on_startup: false,
+            sync_interval: "off".into(),
+            sync_strategy: "localWins".into(),
         };
         let next = AppConfig {
             locale: "en-US".into(),
@@ -2665,6 +2681,14 @@ mod tests {
             surface_height: None,
             toggle_visibility_shortcut: "Ctrl+Shift+H".into(),
             last_known_base_dir: None,
+            oss_provider: "aliyun-oss".into(),
+            oss_endpoint: "oss-cn-hangzhou.aliyuncs.com".into(),
+            oss_bucket: "my-bucket".into(),
+            oss_access_key_id: "LTAI5t...".into(),
+            oss_remote_prefix: "notes".into(),
+            sync_on_startup: true,
+            sync_interval: "5min".into(),
+            sync_strategy: "remoteWins".into(),
         };
 
         assert_eq!(
@@ -2673,6 +2697,7 @@ mod tests {
                 autostart_changed: true,
                 global_shortcut_changed: true,
                 toggle_visibility_shortcut_changed: true,
+                sync_settings_changed: true,
             }
         );
         assert_eq!(
@@ -2681,6 +2706,7 @@ mod tests {
                 autostart_changed: false,
                 global_shortcut_changed: false,
                 toggle_visibility_shortcut_changed: false,
+                sync_settings_changed: false,
             }
         );
     }

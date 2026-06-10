@@ -54,7 +54,12 @@
     "unsupportedFile": "Only .md files are supported",
     "unsupportedImageFormat": "Unsupported image format",
     "unsupportedShortcut": "{{field}} configuration is invalid",
-    "unsupportedShortcutGeneric": "Shortcut configuration is invalid"
+    "unsupportedShortcutGeneric": "Shortcut configuration is invalid",
+    "ossConnectionFailed": "OSS connection failed",
+    "ossBucketNotFound": "Bucket not found or no access permission",
+    "ossAuthFailed": "OSS authentication failed, please check Access Key",
+    "syncInProgress": "Sync is in progress",
+    "syncConfigIncomplete": "Please complete OSS configuration first"
   },
   "markdown": {
     "copied": "Copied",
@@ -426,6 +431,67 @@
         "contain": "Contain",
         "repeat": "Repeat"
       }
+    },
+    "cloud": {
+      "title": "Cloud Sync",
+      "provider": {
+        "label": "Service Provider",
+        "aliyunOss": "Alibaba Cloud OSS"
+      },
+      "endpoint": "Endpoint",
+      "bucket": "Bucket",
+      "accessKeyId": "Access Key ID",
+      "accessKeySecret": "Access Key Secret",
+      "showSecret": "Show secret",
+      "hideSecret": "Hide secret",
+      "remotePrefix": "Remote path prefix (optional)",
+      "remotePrefixHint": "e.g. floral-notepaper/",
+      "testConnection": "Test Connection",
+      "testing": "Testing...",
+      "connectionSuccess": "Connection successful",
+      "connectionFailed": "Connection failed: {{message}}",
+      "notConfigured": "Not configured"
+    },
+    "sync": {
+      "title": "Sync Settings",
+      "onStartup": "Sync on startup",
+      "interval": {
+        "label": "Sync interval",
+        "off": "Off",
+        "1min": "1 minute",
+        "3min": "3 minutes",
+        "5min": "5 minutes",
+        "10min": "10 minutes",
+        "30min": "30 minutes",
+        "1hour": "1 hour",
+        "daily": "Daily at midnight"
+      },
+      "strategy": {
+        "label": "Sync strategy",
+        "localWins": "Local overrides remote",
+        "remoteWins": "Remote overrides local",
+        "manual": "Resolve conflicts manually"
+      },
+      "strategyHint": "Strategy changes take effect on the next sync",
+      "lastSynced": "Last synced: {{time}}",
+      "neverSynced": "Never synced",
+      "syncNow": "Sync Now",
+      "syncing": "Syncing...",
+      "syncComplete": "Sync complete: {{uploaded}} uploaded, {{downloaded}} downloaded",
+      "syncError": "Sync failed: {{message}}",
+      "conflicts": "{{count}} conflict(s) to resolve"
+    }
+  },
+  "sync": {
+    "cloudIcon": {
+      "tooltip": "Synced to cloud",
+      "notSynced": "Not synced"
+    },
+    "status": {
+      "idle": "Idle",
+      "syncing": "Syncing",
+      "completed": "Completed",
+      "error": "Sync error"
     }
   },
   "tile": {
