@@ -278,7 +278,7 @@ impl OssClient {
 
     pub async fn test_connection(&self) -> Result<(), SyncError> {
         let date = Utc::now().format("%a, %d %b %Y %H:%M:%S GMT").to_string();
-        let authorization = self.sign_request("HEAD", "/", "", &date);
+        let authorization = self.sign_request("HEAD", "", "", &date);
 
         let url = format!("https://{}.{}/", self.config.bucket, self.config.endpoint);
 

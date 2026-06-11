@@ -1152,6 +1152,23 @@ export function MainWindow({
 
   const handleOpenSettings = async () => {
     if (settingsOpen) {
+      // Defensive: if settingsOpen is true but panel is invisible, state is out of sync.
+      // Reset and reopen in the next frame so the user only needs one click.
+      if (!visibleSidePanel) {
+        setSettingsOpen(false);
+        setDraftConfig(null);
+        requestAnimationFrame(() => {
+          setSettingsOpen(true);
+          setAboutOpen(false);
+          getConfig()
+            .then((config) => {
+              setSettingsConfig(config);
+              setDraftConfig({ ...config });
+            })
+            .catch(() => {});
+        });
+        return;
+      }
       setSettingsOpen(false);
       setDraftConfig(null);
       return;
