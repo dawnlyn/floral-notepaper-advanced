@@ -494,6 +494,18 @@
       "error": "Sync error"
     }
   },
+  "recycleBin": {
+    "title": "Recycle Bin",
+    "empty": "Recycle bin is empty",
+    "emptyTrash": "Empty Recycle Bin",
+    "confirmEmpty": "Empty the recycle bin? All notes will be permanently deleted",
+    "restore": "Restore",
+    "restoreSuccess": "Note restored",
+    "permanentDelete": "Delete Permanently",
+    "confirmPermanentDelete": "Delete permanently? This action cannot be undone",
+    "permanentDeleteSuccess": "Permanently deleted",
+    "trashSuccess": "Moved to recycle bin"
+  },
   "tile": {
     "empty": "Empty"
   }

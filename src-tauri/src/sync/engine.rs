@@ -80,20 +80,34 @@ impl<'a> SyncEngine<'a> {
         let start_time = std::time::Instant::now();
         let mut uploaded = 0usize;
         let mut downloaded = 0usize;
+        let mut _deleted_remote = 0usize;
         let mut conflicts = Vec::new();
         let mut errors = Vec::new();
 
         // 1. Fetch remote manifest
         let remote_manifest = self.fetch_remote_manifest().await?;
 
-        // 2. Get local notes
+        // 2. Get local notes + trash/deletion info
         let local_notes = self
             .store
             .list_notes()
             .map_err(|e| SyncError::new("notes", e.to_string()))?;
+        let trashed_ids: Vec<String> = self
+            .store
+            .list_trashed_notes()
+            .map_err(|e| SyncError::new("notes", e.to_string()))?
+            .iter()
+            .map(|n| n.id.clone())
+            .collect();
+        let permanently_deleted_ids = self.state_manager.get_permanently_deleted_ids();
 
         // 3. Build sync plan
-        let actions = self.build_sync_plan(&remote_manifest, &local_notes);
+        let actions = self.build_sync_plan(
+            &remote_manifest,
+            &local_notes,
+            &trashed_ids,
+            &permanently_deleted_ids,
+        );
 
         // 4. Execute actions
         for action in actions {
@@ -130,20 +144,31 @@ impl<'a> SyncEngine<'a> {
                     });
                 }
                 SyncAction::DeleteLocal { note_id } => {
-                    if let Err(e) = self.store.delete_note(&note_id) {
+                    // Remote deleted -> trash locally (soft delete)
+                    if let Err(e) = self.store.trash_note(&note_id) {
                         errors.push(format!("DeleteLocal {}: {}", note_id, e));
+                    }
+                }
+                SyncAction::DeleteRemote { note_id } => {
+                    // Local permanent delete -> remove from OSS
+                    if let Err(e) = self.delete_remote_note(&note_id).await {
+                        errors.push(format!("DeleteRemote {}: {}", note_id, e));
+                    } else {
+                        self.state_manager.remove_permanently_deleted(&note_id);
+                        _deleted_remote += 1;
                     }
                 }
                 SyncAction::Skip { .. } => {}
             }
         }
 
-        // 5. Update remote manifest
+        // 5. Update remote manifest (merge strategy)
         let updated_local_notes = self
             .store
             .list_notes()
             .map_err(|e| SyncError::new("notes", e.to_string()))?;
-        self.update_remote_manifest(&updated_local_notes).await?;
+        self.update_remote_manifest(&updated_local_notes, &remote_manifest)
+            .await?;
 
         // 6. Update state
         self.state_manager.update_last_synced();
@@ -175,9 +200,17 @@ impl<'a> SyncEngine<'a> {
         }
     }
 
-    async fn update_remote_manifest(&self, local_notes: &[NoteMetadata]) -> Result<(), SyncError> {
+    async fn update_remote_manifest(
+        &self,
+        local_notes: &[NoteMetadata],
+        old_manifest: &SyncManifest,
+    ) -> Result<(), SyncError> {
+        let local_ids: std::collections::HashSet<String> =
+            local_notes.iter().map(|n| n.id.clone()).collect();
+
         let mut entries = Vec::new();
 
+        // 1. Add all active local notes
         for note in local_notes {
             let content = self
                 .store
@@ -199,6 +232,34 @@ impl<'a> SyncEngine<'a> {
             });
         }
 
+        // 2. Preserve remote tombstones (deleted=true) that are not re-uploaded
+        let thirty_days_ago = Utc::now() - chrono::Duration::days(30);
+        for remote_entry in &old_manifest.notes {
+            if remote_entry.deleted
+                && !local_ids.contains(&remote_entry.id)
+                && remote_entry.updated_at > thirty_days_ago
+            {
+                entries.push(remote_entry.clone());
+            }
+        }
+
+        // 3. Add locally permanently-deleted notes as new tombstones
+        for del_id in self.state_manager.get_permanently_deleted_ids() {
+            if !entries.iter().any(|e| e.id == del_id) {
+                entries.push(RemoteNoteEntry {
+                    id: del_id,
+                    title: String::new(),
+                    file_name: String::new(),
+                    category: String::new(),
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                    word_count: 0,
+                    content_hash: String::new(),
+                    deleted: true,
+                });
+            }
+        }
+
         let manifest = SyncManifest {
             version: 1,
             last_synced_at: Utc::now(),
@@ -218,40 +279,75 @@ impl<'a> SyncEngine<'a> {
         &self,
         remote_manifest: &SyncManifest,
         local_notes: &[NoteMetadata],
+        trashed_ids: &[String],
+        permanently_deleted_ids: &[String],
     ) -> Vec<SyncAction> {
         let mut actions = Vec::new();
 
-        let remote_map: HashMap<String, &RemoteNoteEntry> = remote_manifest
+        // Separate remote entries into active and deleted
+        let remote_active: HashMap<String, &RemoteNoteEntry> = remote_manifest
             .notes
             .iter()
             .filter(|e| !e.deleted)
             .map(|e| (e.id.clone(), e))
             .collect();
 
+        let remote_deleted_ids: std::collections::HashSet<String> = remote_manifest
+            .notes
+            .iter()
+            .filter(|e| e.deleted)
+            .map(|e| e.id.clone())
+            .collect();
+
         let local_map: HashMap<String, &NoteMetadata> =
             local_notes.iter().map(|n| (n.id.clone(), n)).collect();
 
-        // Notes only in local -> upload
+        let trashed_set: std::collections::HashSet<&String> = trashed_ids.iter().collect();
+        let perm_deleted_set: std::collections::HashSet<&String> =
+            permanently_deleted_ids.iter().collect();
+
+        // 1. Permanent delete propagation: local permanently deleted AND still active on remote → DeleteRemote
+        for id in permanently_deleted_ids {
+            if remote_active.contains_key(id) {
+                actions.push(SyncAction::DeleteRemote {
+                    note_id: id.clone(),
+                });
+            }
+        }
+
+        // 2. Remote delete propagation: remote deleted AND still exists locally → DeleteLocal (trash)
+        for id in &remote_deleted_ids {
+            if local_map.contains_key(id) {
+                actions.push(SyncAction::DeleteLocal {
+                    note_id: id.clone(),
+                });
+            }
+        }
+
+        // 3. Notes only in local (exclude remote_deleted) -> upload
         for (id, _local) in &local_map {
-            if !remote_map.contains_key(id) {
+            if !remote_active.contains_key(id) && !remote_deleted_ids.contains(id) {
                 actions.push(SyncAction::Upload {
                     note_id: id.clone(),
                 });
             }
         }
 
-        // Notes only in remote -> download
-        for (id, _remote) in &remote_map {
-            if !local_map.contains_key(id) {
+        // 4. Notes only in remote (exclude trashed + permanently deleted) -> download
+        for (id, _remote) in &remote_active {
+            if !local_map.contains_key(id)
+                && !trashed_set.contains(id)
+                && !perm_deleted_set.contains(id)
+            {
                 actions.push(SyncAction::Download {
                     note_id: id.clone(),
                 });
             }
         }
 
-        // Notes in both -> compare
+        // 5. Notes in both -> compare
         for (id, local) in &local_map {
-            if let Some(remote) = remote_map.get(id) {
+            if let Some(remote) = remote_active.get(id) {
                 let local_content = match self.store.read_note(id) {
                     Ok(note) => note.content,
                     Err(_) => continue,
@@ -292,6 +388,32 @@ impl<'a> SyncEngine<'a> {
         }
 
         actions
+    }
+
+    async fn delete_remote_note(&self, note_id: &str) -> Result<(), SyncError> {
+        // Delete content file (ignore 404)
+        match self
+            .client
+            .delete_object(&self.note_content_key(note_id))
+            .await
+        {
+            Ok(_) => {}
+            Err(e) if e.message.contains("404") || e.message.contains("Not Found") => {}
+            Err(e) => return Err(e),
+        }
+        // Delete meta file (ignore 404)
+        match self
+            .client
+            .delete_object(&self.note_meta_key(note_id))
+            .await
+        {
+            Ok(_) => {}
+            Err(e) if e.message.contains("404") || e.message.contains("Not Found") => {}
+            Err(e) => return Err(e),
+        }
+        // Clean up sync state
+        self.state_manager.remove_note_sync_record(note_id);
+        Ok(())
     }
 
     async fn upload_note(&self, note_id: &str) -> Result<(), SyncError> {
@@ -366,7 +488,7 @@ impl<'a> SyncEngine<'a> {
 
         // Try to update existing note, or create new one
         match self.store.update_note(note_id, save_request.clone()) {
-            Ok(note) => {
+            Ok(_) => {
                 // Update successful
             }
             Err(_) => {

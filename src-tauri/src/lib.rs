@@ -42,9 +42,42 @@ fn notes_update(app: AppHandle, id: String, request: SaveNoteRequest) -> Result<
 
 #[tauri::command]
 fn notes_delete(app: AppHandle, id: String) -> Result<(), AppError> {
-    default_store()?.delete_note(&id)?;
+    default_store()?.trash_note(&id)?;
     let _ = app.emit("notes-changed", ());
     Ok(())
+}
+
+#[tauri::command]
+fn notes_trash(app: AppHandle, id: String) -> Result<(), AppError> {
+    default_store()?.trash_note(&id)?;
+    let _ = app.emit("notes-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn notes_trash_list() -> Result<Vec<NoteMetadata>, AppError> {
+    default_store()?.list_trashed_notes()
+}
+
+#[tauri::command]
+fn notes_restore(app: AppHandle, id: String) -> Result<NoteMetadata, AppError> {
+    let note = default_store()?.restore_note(&id)?;
+    let _ = app.emit("notes-changed", ());
+    Ok(note)
+}
+
+#[tauri::command]
+fn notes_permanent_delete(app: AppHandle, id: String) -> Result<(), AppError> {
+    default_store()?.permanent_delete_note(&id)?;
+    let _ = app.emit("notes-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn notes_empty_trash(app: AppHandle) -> Result<Vec<String>, AppError> {
+    let ids = default_store()?.empty_trash()?;
+    let _ = app.emit("notes-changed", ());
+    Ok(ids)
 }
 
 #[tauri::command]
@@ -416,6 +449,11 @@ pub fn run() {
             notes_create,
             notes_update,
             notes_delete,
+            notes_trash,
+            notes_trash_list,
+            notes_restore,
+            notes_permanent_delete,
+            notes_empty_trash,
             notes_import_markdown,
             notes_export_markdown,
             notes_move_category,

@@ -36,16 +36,20 @@ import {
   createNote,
   createCategory,
   deleteCategory,
-  deleteNote,
+  emptyTrash,
   getErrorMessage,
   getFileModifiedTime,
   getNote,
   listCategories,
   listNotes,
+  listTrashedNotes,
   moveNoteCategory,
+  permanentDeleteNote,
   readExternalFile,
   renameCategory,
+  restoreNote,
   saveExternalFile,
+  trashNote,
   updateNote,
 } from "../features/notes/api";
 import { cleanUnusedImages, saveImageFromPath } from "../features/images/api";
@@ -68,7 +72,6 @@ import {
 } from "../features/notes/noteContextMenu";
 import { openNotepadWindow, takeStartupFile, toggleTileWindow } from "../features/windows/api";
 import { getNotesCloudStatus } from "../features/sync/api";
-import type { NoteCloudStatus } from "../features/sync/types";
 import {
   closeCurrentWindow,
   minimizeCurrentWindow,
@@ -342,6 +345,10 @@ export function MainWindow({
   const [renamingCategory, setRenamingCategory] = useState<string | null>(null);
   const [renameCategoryValue, setRenameCategoryValue] = useState("");
   const [dragOverCategory, setDragOverCategory] = useState<string | null>(null);
+  const [trashedNotes, setTrashedNotes] = useState<NoteMetadata[]>([]);
+  const [trashExpanded, setTrashExpanded] = useState(false);
+  const [permanentDeleteConfirm, setPermanentDeleteConfirm] = useState<string | null>(null);
+  const [emptyTrashConfirm, setEmptyTrashConfirm] = useState(false);
   const [settingsOverlay, setSettingsOverlay] = useState(() =>
     typeof window !== "undefined" ? window.innerWidth < 1080 : true,
   );
@@ -560,6 +567,12 @@ export function MainWindow({
     setNotes(loadedNotes);
     setCategories(loadedCategories);
     return loadedNotes;
+  }, []);
+
+  const refreshTrashedNotes = useCallback(() => {
+    listTrashedNotes()
+      .then(setTrashedNotes)
+      .catch(() => {});
   }, []);
 
   const clearCurrentNote = useCallback(() => {
@@ -808,11 +821,17 @@ export function MainWindow({
           }
         }
       });
+      refreshTrashedNotes();
     });
     return () => {
       void unlisten.then((fn) => fn());
     };
-  }, [refreshNotes, loadNote, clearCurrentNote]);
+  }, [refreshNotes, loadNote, clearCurrentNote, refreshTrashedNotes]);
+
+  // Load trashed notes on mount
+  useEffect(() => {
+    refreshTrashedNotes();
+  }, [refreshTrashedNotes]);
 
   useEffect(() => {
     function handleFocus() {
@@ -1141,7 +1160,7 @@ export function MainWindow({
     setAboutOpen(false);
     if (draftConfig) return;
     try {
-      const config = settingsConfig ?? await getConfig();
+      const config = settingsConfig ?? (await getConfig());
       if (!settingsConfig) {
         setSettingsConfig(config);
         setSavedNotesDir(config.notesDir);
@@ -1334,13 +1353,48 @@ export function MainWindow({
 
     setDeleteConfirm(false);
     try {
-      await deleteNote(noteId);
+      await trashNote(noteId);
       const remaining = await refreshNotes();
+      refreshTrashedNotes();
+      showToast(t("recycleBin.trashSuccess", { defaultValue: "已移至回收站" }));
       if (noteId === selectedId && remaining[0]) {
         await loadNote(remaining[0].id);
       } else if (noteId === selectedId) {
         clearCurrentNote();
       }
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  };
+
+  const handleRestoreNote = async (noteId: string) => {
+    try {
+      await restoreNote(noteId);
+      refreshTrashedNotes();
+      await refreshNotes();
+      showToast(t("recycleBin.restoreSuccess", { defaultValue: "笔记已恢复" }));
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  };
+
+  const handlePermanentDelete = async (noteId: string) => {
+    setPermanentDeleteConfirm(null);
+    try {
+      await permanentDeleteNote(noteId);
+      refreshTrashedNotes();
+      showToast(t("recycleBin.permanentDeleteSuccess", { defaultValue: "已彻底删除" }));
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  };
+
+  const handleEmptyTrash = async () => {
+    setEmptyTrashConfirm(false);
+    try {
+      await emptyTrash();
+      refreshTrashedNotes();
+      showToast(t("recycleBin.permanentDeleteSuccess", { defaultValue: "已彻底删除" }));
     } catch (error) {
       showToast(getErrorMessage(error));
     }
@@ -2161,7 +2215,6 @@ export function MainWindow({
                                       height="12"
                                       viewBox="0 0 24 24"
                                       fill="currentColor"
-                                      title={t("sync.cloudIcon.tooltip", { defaultValue: "已同步到云端" })}
                                     >
                                       <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" />
                                     </svg>
@@ -2354,7 +2407,6 @@ export function MainWindow({
                                           height="12"
                                           viewBox="0 0 24 24"
                                           fill="currentColor"
-                                          title={t("sync.cloudIcon.tooltip", { defaultValue: "已同步到云端" })}
                                         >
                                           <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" />
                                         </svg>
@@ -2378,6 +2430,139 @@ export function MainWindow({
                     </div>
                   )}
                 </div>
+              </div>
+
+              {/* Recycle Bin */}
+              <div className="shrink-0 border-t border-paper-deep/20 px-2 pb-2">
+                <button
+                  onClick={() => setTrashExpanded(!trashExpanded)}
+                  className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] text-ink-ghost hover:text-ink-faint hover:bg-paper-warm/60 transition-colors cursor-pointer"
+                >
+                  <svg
+                    className={`transition-transform duration-200 ${trashExpanded ? "rotate-90" : ""}`}
+                    width="10"
+                    height="10"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                  </svg>
+                  <span>
+                    {t("recycleBin.title", { defaultValue: "回收站" })}
+                    {trashedNotes.length > 0 ? ` (${trashedNotes.length})` : ""}
+                  </span>
+                  {trashedNotes.length > 0 && (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEmptyTrashConfirm(true);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.stopPropagation();
+                          setEmptyTrashConfirm(true);
+                        }
+                      }}
+                      className="ml-auto text-[10px] text-red-400 hover:text-red-500 transition-colors cursor-pointer"
+                    >
+                      {t("recycleBin.emptyTrash", { defaultValue: "清空" })}
+                    </span>
+                  )}
+                </button>
+
+                {trashExpanded && (
+                  <div className="space-y-0.5 mt-0.5">
+                    {trashedNotes.length === 0 ? (
+                      <div className="px-3 py-3 text-center text-[11px] text-ink-ghost/60">
+                        {t("recycleBin.empty", { defaultValue: "回收站为空" })}
+                      </div>
+                    ) : (
+                      trashedNotes.map((note) => (
+                        <div
+                          key={note.id}
+                          className="group flex items-center gap-1 px-2 py-1 rounded-md hover:bg-paper-warm/40 transition-colors"
+                        >
+                          <span className="flex-1 min-w-0 truncate text-[11px] text-ink-faint">
+                            {note.title || t("common.untitledNote", { defaultValue: "无标题笔记" })}
+                          </span>
+                          <button
+                            onClick={() => void handleRestoreNote(note.id)}
+                            className="shrink-0 px-1.5 py-0.5 rounded text-[10px] text-bamboo hover:bg-bamboo/10 transition-colors cursor-pointer"
+                          >
+                            {t("recycleBin.restore", { defaultValue: "恢复" })}
+                          </button>
+                          {permanentDeleteConfirm === note.id ? (
+                            <span className="shrink-0 flex items-center gap-0.5">
+                              <button
+                                onClick={() => void handlePermanentDelete(note.id)}
+                                className="px-1.5 py-0.5 rounded text-[10px] text-white bg-red-500 hover:bg-red-600 transition-colors cursor-pointer"
+                              >
+                                确
+                              </button>
+                              <button
+                                onClick={() => setPermanentDeleteConfirm(null)}
+                                className="px-1.5 py-0.5 rounded text-[10px] text-ink-ghost hover:bg-paper-deep/30 transition-colors cursor-pointer"
+                              >
+                                否
+                              </button>
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => setPermanentDeleteConfirm(note.id)}
+                              className="shrink-0 px-1.5 py-0.5 rounded text-[10px] text-red-400 hover:bg-red-50 hover:text-red-500 transition-colors cursor-pointer opacity-0 group-hover:opacity-100"
+                            >
+                              {t("recycleBin.permanentDelete", { defaultValue: "删除" })}
+                            </button>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {/* Empty trash confirmation */}
+                {emptyTrashConfirm && (
+                  <div className="mt-1 px-2 py-2 bg-red-50/80 rounded-md border border-red-200/50">
+                    <p className="text-[11px] text-red-500 mb-1.5">
+                      {t("recycleBin.confirmEmpty", {
+                        defaultValue: "确定清空回收站？所有笔记将被彻底删除",
+                      })}
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => void handleEmptyTrash()}
+                        className="px-2 py-0.5 rounded text-[11px] text-white bg-red-500 hover:bg-red-600 transition-colors cursor-pointer"
+                      >
+                        {t("common.delete", { defaultValue: "确定" })}
+                      </button>
+                      <button
+                        onClick={() => setEmptyTrashConfirm(false)}
+                        className="px-2 py-0.5 rounded text-[11px] text-ink-ghost hover:bg-paper-deep/30 transition-colors cursor-pointer"
+                      >
+                        {t("common.cancel", { defaultValue: "取消" })}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>

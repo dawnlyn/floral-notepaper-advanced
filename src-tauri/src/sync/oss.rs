@@ -2,10 +2,8 @@ use super::types::SyncError;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use chrono::Utc;
 use hmac::{Hmac, Mac};
-use log::log;
 use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
-use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, DATE};
-use serde_json::to_string;
+use reqwest::header::{CONTENT_TYPE, DATE};
 use sha1::Sha1;
 use std::fmt::Debug;
 
@@ -280,7 +278,6 @@ impl OssClient {
 
     pub async fn test_connection(&self) -> Result<(), SyncError> {
         let date = Utc::now().format("%a, %d %b %Y %H:%M:%S GMT").to_string();
-        let resource = format!("/{}/", self.config.bucket);
         let authorization = self.sign_request("HEAD", "/", "", &date);
 
         let url = format!("https://{}.{}/", self.config.bucket, self.config.endpoint);

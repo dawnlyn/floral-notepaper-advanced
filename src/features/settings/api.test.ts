@@ -8,7 +8,7 @@ import {
   normalizeViewMode,
   saveConfig,
 } from "./api";
-import type { AppConfig } from "./types";
+import type { AppConfig, SyncInterval, SyncStrategy } from "./types";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -29,6 +29,14 @@ describe("settings api", () => {
 
   test("gets config through Rust", async () => {
     const config: AppConfig = {
+      syncInterval: {} as SyncInterval,
+      syncStrategy: {} as SyncStrategy,
+      ossAccessKeyId: "",
+      ossBucket: "",
+      ossEndpoint: "",
+      ossProvider: "",
+      ossRemotePrefix: "",
+      syncOnStartup: false,
       locale: "zh-CN",
       notesDir: "D:\\notes",
       globalShortcut: "Ctrl+Space",
@@ -60,6 +68,14 @@ describe("settings api", () => {
 
   test("saves config through Rust", async () => {
     const config: AppConfig = {
+      ossAccessKeyId: "",
+      ossBucket: "",
+      ossEndpoint: "",
+      ossProvider: "",
+      ossRemotePrefix: "",
+      syncInterval: {} as SyncInterval,
+      syncStrategy: {} as SyncStrategy,
+      syncOnStartup: false,
       locale: "zh-CN",
       notesDir: "D:\\notes",
       globalShortcut: "Alt+Space",

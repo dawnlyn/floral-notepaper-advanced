@@ -43,6 +43,26 @@ export function deleteNote(id: string): Promise<void> {
   return invoke("notes_delete", { id });
 }
 
+export function trashNote(id: string): Promise<void> {
+  return invoke("notes_trash", { id });
+}
+
+export function listTrashedNotes(): Promise<NoteMetadata[]> {
+  return invoke("notes_trash_list");
+}
+
+export function restoreNote(id: string): Promise<NoteMetadata> {
+  return invoke("notes_restore", { id });
+}
+
+export function permanentDeleteNote(id: string): Promise<void> {
+  return invoke("notes_permanent_delete", { id });
+}
+
+export function emptyTrash(): Promise<string[]> {
+  return invoke("notes_empty_trash");
+}
+
 export function moveNoteCategory(id: string, category: string): Promise<NoteMetadata> {
   return invoke("notes_move_category", { id, category });
 }

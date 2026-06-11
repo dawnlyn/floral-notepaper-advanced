@@ -96,6 +96,15 @@ pub struct SyncState {
     pub active_strategy: String,
     #[serde(default)]
     pub note_sync_records: HashMap<String, NoteSyncRecord>,
+    #[serde(default)]
+    pub permanently_deleted: Vec<DeletedNoteRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeletedNoteRecord {
+    pub note_id: String,
+    pub deleted_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,6 +128,9 @@ pub enum SyncAction {
         remote_updated: DateTime<Utc>,
     },
     DeleteLocal {
+        note_id: String,
+    },
+    DeleteRemote {
         note_id: String,
     },
     Skip {

@@ -494,6 +494,18 @@
       "error": "同步出错"
     }
   },
+  "recycleBin": {
+    "title": "回收站",
+    "empty": "回收站为空",
+    "emptyTrash": "清空回收站",
+    "confirmEmpty": "确定清空回收站？所有笔记将被彻底删除",
+    "restore": "恢复",
+    "restoreSuccess": "笔记已恢复",
+    "permanentDelete": "彻底删除",
+    "confirmPermanentDelete": "确定彻底删除？此操作不可撤销",
+    "permanentDeleteSuccess": "已彻底删除",
+    "trashSuccess": "已移至回收站"
+  },
   "tile": {
     "empty": "空"
   }

@@ -123,6 +123,8 @@ pub struct NoteMetadata {
     pub updated_at: DateTime<Utc>,
     pub word_count: usize,
     pub preview: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trashed_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -218,6 +220,8 @@ impl From<tauri::Error> for AppError {
 #[serde(rename_all = "camelCase")]
 struct MetadataFile {
     notes: Vec<NoteMetadata>,
+    #[serde(default)]
+    trashed_notes: Vec<NoteMetadata>,
 }
 
 #[derive(Debug, Clone)]
@@ -474,6 +478,7 @@ impl NoteStore {
             updated_at: now,
             word_count,
             preview: preview(&request.content),
+            trashed_at: None,
         };
 
         fs::write(&note_path, &request.content)?;
@@ -546,6 +551,14 @@ impl NoteStore {
     }
 
     pub fn delete_note(&self, id: &str) -> Result<(), AppError> {
+        self.trash_note(id)
+    }
+
+    fn trash_dir(&self, note_id: &str) -> PathBuf {
+        self.base_dir.join(".trash").join(note_id)
+    }
+
+    pub fn trash_note(&self, id: &str) -> Result<(), AppError> {
         self.ensure_storage()?;
         let mut metadata_file = self.load_metadata()?;
         let index = metadata_file
@@ -553,15 +566,125 @@ impl NoteStore {
             .iter()
             .position(|note| note.id == id)
             .ok_or_else(|| AppError::note_not_found(id))?;
-        let metadata = metadata_file.notes.remove(index);
-        let path = self.note_path_in_category(&metadata.file_name, &metadata.category);
-        if path.exists() {
-            trash::delete(&path)
-                .map_err(|e| AppError::new("trash", format!("移入回收站失败: {e}")))?;
+        let mut metadata = metadata_file.notes.remove(index);
+        metadata.trashed_at = Some(Utc::now());
+
+        // Move note file to .trash/{id}/
+        let src_path = self.note_path_in_category(&metadata.file_name, &metadata.category);
+        let trash_dir = self.trash_dir(id);
+        fs::create_dir_all(&trash_dir)?;
+        if src_path.exists() {
+            let dst_path = trash_dir.join(&metadata.file_name);
+            if fs::rename(&src_path, &dst_path).is_err() {
+                // cross-filesystem fallback
+                fs::copy(&src_path, &dst_path)?;
+                let _ = fs::remove_file(&src_path);
+            }
         }
+
+        // Move images to .trash/{id}/images/
+        let images_src = self.images_dir(id);
+        if images_src.exists() {
+            let images_dst = trash_dir.join("images");
+            if fs::rename(&images_src, &images_dst).is_err() {
+                copy_dir_recursive(&images_src, &images_dst)?;
+                let _ = fs::remove_dir_all(&images_src);
+            }
+        }
+
+        metadata_file.trashed_notes.push(metadata);
         self.save_metadata(&metadata_file)?;
-        let _ = self.delete_note_images(id);
         Ok(())
+    }
+
+    pub fn list_trashed_notes(&self) -> Result<Vec<NoteMetadata>, AppError> {
+        self.ensure_storage()?;
+        let mut metadata = self.load_metadata()?.trashed_notes;
+        metadata.sort_by_key(|note| std::cmp::Reverse(note.trashed_at));
+        Ok(metadata)
+    }
+
+    pub fn restore_note(&self, id: &str) -> Result<NoteMetadata, AppError> {
+        self.ensure_storage()?;
+        let mut metadata_file = self.load_metadata()?;
+        let index = metadata_file
+            .trashed_notes
+            .iter()
+            .position(|note| note.id == id)
+            .ok_or_else(|| AppError::note_not_found(id))?;
+        let mut metadata = metadata_file.trashed_notes.remove(index);
+
+        let trash_dir = self.trash_dir(id);
+
+        // Move note file back
+        let trash_file = trash_dir.join(&metadata.file_name);
+        if trash_file.exists() {
+            let dst_path = self.note_path_in_category(&metadata.file_name, &metadata.category);
+            if let Some(parent) = dst_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            if fs::rename(&trash_file, &dst_path).is_err() {
+                fs::copy(&trash_file, &dst_path)?;
+                let _ = fs::remove_file(&trash_file);
+            }
+        }
+
+        // Move images back
+        let trash_images = trash_dir.join("images");
+        if trash_images.exists() {
+            let dst_images = self.images_dir(id);
+            if fs::rename(&trash_images, &dst_images).is_err() {
+                copy_dir_recursive(&trash_images, &dst_images)?;
+                let _ = fs::remove_dir_all(&trash_images);
+            }
+        }
+
+        // Clean up trash directory
+        let _ = fs::remove_dir_all(&trash_dir);
+
+        metadata.trashed_at = None;
+        let result = metadata.clone();
+        metadata_file.notes.push(metadata);
+        self.save_metadata(&metadata_file)?;
+        Ok(result)
+    }
+
+    pub fn permanent_delete_note(&self, id: &str) -> Result<(), AppError> {
+        self.ensure_storage()?;
+        let mut metadata_file = self.load_metadata()?;
+        let index = metadata_file
+            .trashed_notes
+            .iter()
+            .position(|note| note.id == id)
+            .ok_or_else(|| AppError::note_not_found(id))?;
+        metadata_file.trashed_notes.remove(index);
+
+        let trash_dir = self.trash_dir(id);
+        if trash_dir.exists() {
+            fs::remove_dir_all(&trash_dir)?;
+        }
+
+        self.save_metadata(&metadata_file)?;
+        Ok(())
+    }
+
+    pub fn empty_trash(&self) -> Result<Vec<String>, AppError> {
+        self.ensure_storage()?;
+        let mut metadata_file = self.load_metadata()?;
+        let ids: Vec<String> = metadata_file
+            .trashed_notes
+            .iter()
+            .map(|n| n.id.clone())
+            .collect();
+        for id in &ids {
+            let trash_dir = self.trash_dir(id);
+            if trash_dir.exists() {
+                let _ = fs::remove_dir_all(&trash_dir);
+            }
+        }
+        metadata_file.trashed_notes.clear();
+        self.save_metadata(&metadata_file)?;
+        Ok(ids)
     }
 
     pub fn images_dir(&self, note_id: &str) -> PathBuf {
@@ -1049,7 +1172,10 @@ impl NoteStore {
             }
         }
 
-        Ok(MetadataFile { notes })
+        Ok(MetadataFile {
+            notes,
+            trashed_notes: Vec::new(),
+        })
     }
 
     fn scan_dir_for_notes(
@@ -1086,6 +1212,7 @@ impl NoteStore {
                 updated_at: modified,
                 word_count: count_words(&content),
                 preview: preview(&content),
+                trashed_at: None,
             });
         }
         Ok(())

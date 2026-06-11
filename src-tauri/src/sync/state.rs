@@ -2,7 +2,7 @@ use crate::json_io::{read_json, write_json_atomic};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use super::types::{NoteCloudStatus, NoteSyncRecord, SyncState, SyncStatusDto};
+use super::types::{DeletedNoteRecord, NoteCloudStatus, NoteSyncRecord, SyncState, SyncStatusDto};
 
 pub struct SyncStateManager {
     state_path: PathBuf,
@@ -83,6 +83,39 @@ impl SyncStateManager {
                 content_hash: record.content_hash.clone(),
             })
             .collect()
+    }
+
+    pub fn mark_permanently_deleted(&self, note_id: &str) {
+        let mut state = self.state.lock().unwrap();
+        // Remove from sync records
+        state.note_sync_records.remove(note_id);
+        // Add to permanently deleted if not already there
+        if !state
+            .permanently_deleted
+            .iter()
+            .any(|r| r.note_id == note_id)
+        {
+            state.permanently_deleted.push(DeletedNoteRecord {
+                note_id: note_id.to_string(),
+                deleted_at: chrono::Utc::now(),
+            });
+        }
+        let _ = write_json_atomic(&self.state_path, &*state);
+    }
+
+    pub fn get_permanently_deleted_ids(&self) -> Vec<String> {
+        let state = self.state.lock().unwrap();
+        state
+            .permanently_deleted
+            .iter()
+            .map(|r| r.note_id.clone())
+            .collect()
+    }
+
+    pub fn remove_permanently_deleted(&self, note_id: &str) {
+        let mut state = self.state.lock().unwrap();
+        state.permanently_deleted.retain(|r| r.note_id != note_id);
+        let _ = write_json_atomic(&self.state_path, &*state);
     }
 
     pub fn get_status_dto(&self) -> SyncStatusDto {
