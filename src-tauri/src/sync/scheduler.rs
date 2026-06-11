@@ -8,6 +8,7 @@ use super::engine::SyncEngine;
 use super::oss::{OssClient, OssConfig};
 use super::state::SyncStateManager;
 use crate::services::notes::default_store;
+use crate::sync::types::SyncError;
 
 const INITIAL_DELAY: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_secs(30);
@@ -158,10 +159,9 @@ fn run_sync_internal(
                 access_key_secret,
             };
 
-            let client = OssClient::new(oss_config)
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            let client = OssClient::new(oss_config).map_err(SyncError::from)?;
 
-            let store = default_store().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            let store = default_store().map_err(SyncError::from)?;
 
             let state_manager = SyncStateManager::new(&store.base_dir);
 
@@ -190,7 +190,7 @@ fn run_sync_internal(
         }
         Err(e) => {
             let _ = app.emit("sync-error", e.to_string());
-            Err(e)
+            Err(Box::from(e))
         }
     }
 }

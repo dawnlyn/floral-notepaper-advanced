@@ -45,6 +45,7 @@ percent-encoding = "2"
 quick-xml = { version = "0.37", features = ["serialize"] }
 hostname = "0.4"
 dirs = "6"
+log = "0.4.29"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

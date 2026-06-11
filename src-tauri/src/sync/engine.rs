@@ -306,7 +306,7 @@ impl<'a> SyncEngine<'a> {
         self.client
             .put_object(
                 &self.note_content_key(note_id),
-                note.content.into_bytes(),
+                note.content.clone().into_bytes(),
                 "text/markdown",
             )
             .await?;

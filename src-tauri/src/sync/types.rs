@@ -1,3 +1,4 @@
+use crate::services::notes::AppError;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -169,5 +170,13 @@ impl From<serde_json::Error> for SyncError {
 impl From<quick_xml::DeError> for SyncError {
     fn from(error: quick_xml::DeError) -> Self {
         Self::new("xml", error.to_string())
+    }
+}
+
+impl From<AppError> for SyncError {
+    fn from(err: AppError) -> Self {
+        // 手动转换，比如转成字符串包装
+        SyncError::new(err.code, err.message)
+        // 或者 Box::new(err) 如果你确定这里可以
     }
 }

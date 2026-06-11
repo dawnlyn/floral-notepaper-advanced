@@ -1,11 +1,13 @@
+use super::types::SyncError;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use chrono::Utc;
 use hmac::{Hmac, Mac};
+use log::log;
 use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, DATE};
+use serde_json::to_string;
 use sha1::Sha1;
-
-use super::types::SyncError;
+use std::fmt::Debug;
 
 #[derive(Debug, Clone)]
 pub struct OssConfig {
@@ -59,8 +61,9 @@ impl OssClient {
 
     fn sign_request(&self, method: &str, resource: &str, content_type: &str, date: &str) -> String {
         let string_to_sign = format!(
-            "{}\n\n{}\n{}\n{}",
+            "{}\n{}\n{}\n{}\n{}",
             method,
+            "",
             content_type,
             date,
             self.canonicalized_resource(resource)
@@ -292,6 +295,7 @@ impl OssClient {
 
         if !response.status().is_success() {
             let status = response.status();
+
             return Err(SyncError::new(
                 "ossConnection",
                 format!("Connection test failed: {}", status),

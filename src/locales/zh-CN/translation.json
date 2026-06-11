@@ -454,7 +454,7 @@
     },
     "sync": {
       "title": "同步设置",
-      "onStartup": "启动时同步",
+      "onStartup·": "启动时同步",
       "interval": {
         "label": "同步间隔",
         "off": "关闭",

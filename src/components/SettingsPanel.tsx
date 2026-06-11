@@ -46,7 +46,15 @@ interface SettingsPanelProps {
   savedConfig: AppConfig | null;
 }
 
-export function SettingsPanel({ config, onChange, onChooseNotesDir, onClose, onSave, onCancel, savedConfig }: SettingsPanelProps) {
+export function SettingsPanel({
+  config,
+  onChange,
+  onChooseNotesDir,
+  onClose,
+  onSave,
+  onCancel,
+  savedConfig,
+}: SettingsPanelProps) {
   const { t } = useTranslation();
 
   // Dirty detection
@@ -58,7 +66,9 @@ export function SettingsPanel({ config, onChange, onChooseNotesDir, onClose, onS
   // OSS credential state (secret stored separately in keyring)
   const [ossSecret, setOssSecret] = useState("");
   const [showSecret, setShowSecret] = useState(false);
-  const [ossTestState, setOssTestState] = useState<"idle" | "testing" | "success" | "error">("idle");
+  const [ossTestState, setOssTestState] = useState<"idle" | "testing" | "success" | "error">(
+    "idle",
+  );
   const [ossTestMsg, setOssTestMsg] = useState("");
   const ossSecretLoaded = useRef(false);
 
@@ -103,7 +113,7 @@ export function SettingsPanel({ config, onChange, onChooseNotesDir, onClose, onS
       setOssTestState("error");
       setOssTestMsg(
         t("settings.cloud.connectionFailed", {
-          message: error instanceof Error ? error.message : String(error),
+          message: error instanceof Error ? error.message : JSON.stringify(error),
           defaultValue: "连接失败",
         }),
       );
@@ -561,8 +571,12 @@ export function SettingsPanel({ config, onChange, onChooseNotesDir, onClose, onS
             onChange={(e) => setConfigValue("ossProvider", e.target.value as OssProvider)}
             className="w-full h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[12px] text-ink-soft outline-none cursor-pointer"
           >
-            <option value="">{t("settings.cloud.notConfigured", { defaultValue: "未配置" })}</option>
-            <option value="aliyun-oss">{t("settings.cloud.provider.aliyunOss", { defaultValue: "阿里云 OSS" })}</option>
+            <option value="">
+              {t("settings.cloud.notConfigured", { defaultValue: "未配置" })}
+            </option>
+            <option value="aliyun-oss">
+              {t("settings.cloud.provider.aliyunOss", { defaultValue: "阿里云 OSS" })}
+            </option>
           </select>
 
           {config.ossProvider === "aliyun-oss" && (
@@ -596,7 +610,9 @@ export function SettingsPanel({ config, onChange, onChooseNotesDir, onClose, onS
                   type={showSecret ? "text" : "password"}
                   value={ossSecret}
                   onChange={(e) => setOssSecret(e.target.value)}
-                  placeholder={t("settings.cloud.accessKeySecret", { defaultValue: "Access Key Secret" })}
+                  placeholder={t("settings.cloud.accessKeySecret", {
+                    defaultValue: "Access Key Secret",
+                  })}
                   className="min-w-0 flex-1 h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[12px] font-mono text-ink-soft outline-none"
                 />
                 <button
@@ -613,7 +629,9 @@ export function SettingsPanel({ config, onChange, onChooseNotesDir, onClose, onS
                 type="text"
                 value={config.ossRemotePrefix}
                 onChange={(e) => setConfigValue("ossRemotePrefix", e.target.value)}
-                placeholder={t("settings.cloud.remotePrefix", { defaultValue: "远程路径前缀（可选）" })}
+                placeholder={t("settings.cloud.remotePrefix", {
+                  defaultValue: "远程路径前缀（可选）",
+                })}
                 className="w-full h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[12px] font-mono text-ink-soft outline-none"
               />
               <p className="text-[10px] text-ink-ghost/60 px-0.5">
@@ -622,7 +640,12 @@ export function SettingsPanel({ config, onChange, onChooseNotesDir, onClose, onS
               <button
                 type="button"
                 onClick={handleTestConnection}
-                disabled={ossTestState === "testing" || !config.ossEndpoint || !config.ossBucket || !config.ossAccessKeyId}
+                disabled={
+                  ossTestState === "testing" ||
+                  !config.ossEndpoint ||
+                  !config.ossBucket ||
+                  !config.ossAccessKeyId
+                }
                 className="h-8 px-3 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
               >
                 {ossTestState === "testing"
@@ -630,7 +653,9 @@ export function SettingsPanel({ config, onChange, onChooseNotesDir, onClose, onS
                   : t("settings.cloud.testConnection", { defaultValue: "测试连接" })}
               </button>
               {ossTestState !== "idle" && ossTestState !== "testing" && (
-                <p className={`text-[11px] ${ossTestState === "success" ? "text-bamboo" : "text-red-400"}`}>
+                <p
+                  className={`text-[11px] ${ossTestState === "success" ? "text-bamboo" : "text-red-400"}`}
+                >
                   {ossTestMsg}
                 </p>
               )}
@@ -657,7 +682,18 @@ export function SettingsPanel({ config, onChange, onChooseNotesDir, onClose, onS
               onChange={(e) => setConfigValue("syncInterval", e.target.value as SyncInterval)}
               className="w-full h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[12px] text-ink-soft outline-none cursor-pointer"
             >
-              {(["off", "1min", "3min", "5min", "10min", "30min", "1hour", "daily"] as SyncInterval[]).map((v) => (
+              {(
+                [
+                  "off",
+                  "1min",
+                  "3min",
+                  "5min",
+                  "10min",
+                  "30min",
+                  "1hour",
+                  "daily",
+                ] as SyncInterval[]
+              ).map((v) => (
                 <option key={v} value={v}>
                   {t(`settings.sync.interval.${v.replace(/[^a-z0-9]/gi, "")}`, { defaultValue: v })}
                 </option>
@@ -671,9 +707,15 @@ export function SettingsPanel({ config, onChange, onChooseNotesDir, onClose, onS
               onChange={(e) => setConfigValue("syncStrategy", e.target.value as SyncStrategy)}
               className="w-full h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[12px] text-ink-soft outline-none cursor-pointer"
             >
-              <option value="localWins">{t("settings.sync.strategy.localWins", { defaultValue: "本地覆盖服务端" })}</option>
-              <option value="remoteWins">{t("settings.sync.strategy.remoteWins", { defaultValue: "服务端覆盖本地" })}</option>
-              <option value="manual">{t("settings.sync.strategy.manual", { defaultValue: "手动解决冲突" })}</option>
+              <option value="localWins">
+                {t("settings.sync.strategy.localWins", { defaultValue: "本地覆盖服务端" })}
+              </option>
+              <option value="remoteWins">
+                {t("settings.sync.strategy.remoteWins", { defaultValue: "服务端覆盖本地" })}
+              </option>
+              <option value="manual">
+                {t("settings.sync.strategy.manual", { defaultValue: "手动解决冲突" })}
+              </option>
             </select>
             <p className="text-[10px] text-ink-ghost/60 px-0.5">
               {t("settings.sync.strategyHint", { defaultValue: "修改策略将在下一次同步时生效" })}
