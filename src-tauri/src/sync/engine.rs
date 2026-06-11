@@ -498,11 +498,19 @@ impl<'a> SyncEngine<'a> {
                 // Update successful
             }
             Err(_) => {
-                // Note doesn't exist locally, create it
-                let _note = self
+                // Note not in active notes — restore from trash if present, preserving original ID
+                if self
                     .store
-                    .create_note(save_request)
-                    .map_err(|e| SyncError::new("notes", e.to_string()))?;
+                    .prepare_trashed_for_download(note_id)
+                    .unwrap_or(false)
+                {
+                    let _ = self.store.update_note(note_id, save_request.clone());
+                } else {
+                    let _note = self
+                        .store
+                        .create_note(save_request)
+                        .map_err(|e| SyncError::new("notes", e.to_string()))?;
+                }
             }
         }
 

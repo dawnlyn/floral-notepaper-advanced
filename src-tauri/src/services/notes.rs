@@ -599,7 +599,18 @@ impl NoteStore {
 
     pub fn list_trashed_notes(&self) -> Result<Vec<NoteMetadata>, AppError> {
         self.ensure_storage()?;
-        let mut metadata = self.load_metadata()?.trashed_notes;
+        let mut metadata_file = self.load_metadata()?;
+        let mut metadata = metadata_file.trashed_notes.clone();
+        let original_len = metadata.len();
+        // Only return entries whose .trash/{id}/ directory actually exists on disk
+        metadata.retain(|note| self.trash_dir(&note.id).exists());
+        // Auto-clean stale entries from metadata.json
+        if metadata.len() != original_len {
+            metadata_file
+                .trashed_notes
+                .retain(|n| self.trash_dir(&n.id).exists());
+            let _ = self.save_metadata(&metadata_file);
+        }
         metadata.sort_by_key(|note| std::cmp::Reverse(note.trashed_at));
         Ok(metadata)
     }
@@ -647,6 +658,31 @@ impl NoteStore {
         metadata_file.notes.push(metadata);
         self.save_metadata(&metadata_file)?;
         Ok(result)
+    }
+
+    /// Move a trashed note back to active notes for sync download.
+    /// Returns true if the note was found in trashed_notes and restored.
+    pub fn prepare_trashed_for_download(&self, note_id: &str) -> Result<bool, AppError> {
+        self.ensure_storage()?;
+        let mut metadata_file = self.load_metadata()?;
+        let index = match metadata_file
+            .trashed_notes
+            .iter()
+            .position(|note| note.id == note_id)
+        {
+            Some(i) => i,
+            None => return Ok(false),
+        };
+        let mut note = metadata_file.trashed_notes.remove(index);
+        note.trashed_at = None;
+        metadata_file.notes.push(note);
+        // Clean up any leftover trash directory
+        let trash_dir = self.trash_dir(note_id);
+        if trash_dir.exists() {
+            let _ = fs::remove_dir_all(&trash_dir);
+        }
+        self.save_metadata(&metadata_file)?;
+        Ok(true)
     }
 
     pub fn permanent_delete_note(&self, id: &str) -> Result<(), AppError> {
