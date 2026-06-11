@@ -345,7 +345,7 @@ impl<'a> SyncEngine<'a> {
             }
         }
 
-        // 5. Notes in both -> compare
+        // 5. Notes in both -> compare content + all metadata
         for (id, local) in &local_map {
             if let Some(remote) = remote_active.get(id) {
                 let local_content = match self.store.read_note(id) {
@@ -354,7 +354,13 @@ impl<'a> SyncEngine<'a> {
                 };
                 let local_hash = Self::compute_content_hash(&local_content);
 
-                if local_hash == remote.content_hash {
+                // Conflict = same note exists on both sides but any field differs
+                let content_match = local_hash == remote.content_hash;
+                let category_match = local.category == remote.category;
+                let title_match = local.title == remote.title;
+                let file_name_match = local.file_name == remote.file_name;
+
+                if content_match && category_match && title_match && file_name_match {
                     actions.push(SyncAction::Skip {
                         note_id: id.clone(),
                     });
