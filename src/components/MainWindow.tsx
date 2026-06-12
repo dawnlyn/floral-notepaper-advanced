@@ -2181,6 +2181,7 @@ export function MainWindow({
                                   e.dataTransfer.setData("text/plain", note.id);
                                   e.dataTransfer.effectAllowed = "move";
                                 }}
+                                onDragEnd={() => setDragOverCategory(null)}
                                 onClick={() => void handleSelectNote(note.id)}
                                 onContextMenu={(event) => handleOpenNoteMenu(event, note.id)}
                                 onMouseEnter={() => setHoveredId(note.id)}
@@ -2273,7 +2274,11 @@ export function MainWindow({
                             e.dataTransfer.dropEffect = "move";
                             setDragOverCategory(group.category);
                           }}
-                          onDragLeave={() => setDragOverCategory(null)}
+                          onDragLeave={(e) => {
+                            if (!e.currentTarget.parentElement?.contains(e.relatedTarget as Node)) {
+                              setDragOverCategory(null);
+                            }
+                          }}
                           onDrop={(e) => {
                             e.preventDefault();
                             setDragOverCategory(null);
@@ -2369,6 +2374,7 @@ export function MainWindow({
                                       e.dataTransfer.setData("text/plain", note.id);
                                       e.dataTransfer.effectAllowed = "move";
                                     }}
+                                    onDragEnd={() => setDragOverCategory(null)}
                                     onClick={() => void handleSelectNote(note.id)}
                                     onContextMenu={(event) => handleOpenNoteMenu(event, note.id)}
                                     onMouseEnter={() => setHoveredId(note.id)}
