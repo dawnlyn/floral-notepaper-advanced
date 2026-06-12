@@ -48,8 +48,8 @@ impl OssClient {
 
     fn object_url(&self, key: &str) -> String {
         format!(
-            "https://{}.{}/{}",
-            self.config.bucket, self.config.endpoint, key
+            "https://{}.{}/{}/{}",
+            self.config.bucket, self.config.endpoint, "", key
         )
     }
 
