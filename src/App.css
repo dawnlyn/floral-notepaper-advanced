@@ -507,6 +507,12 @@ input::placeholder {
   overflow: hidden;
 }
 
+/* Draggable note items */
+.note-drag {
+  -webkit-user-drag: element;
+  user-select: none;
+}
+
 /* Delete confirm inline pop */
 @keyframes delete-confirm-enter {
   from {

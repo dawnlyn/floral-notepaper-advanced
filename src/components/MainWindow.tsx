@@ -294,6 +294,314 @@ interface MainWindowProps {
   initialConfig?: AppConfig;
 }
 
+interface NoteItemProps {
+  note: NoteMetadata;
+  isRoot?: boolean;
+  selectedId: string | null;
+  hoveredId: string | null;
+  setHoveredId: (id: string | null) => void;
+  setDragOverCategory: (cat: string | null) => void;
+  onSelect: (id: string) => void;
+  onOpenMenu: (event: MouseEvent<HTMLElement>, id: string) => void;
+  cloudStatusMap: Record<string, boolean>;
+  t: TFunction;
+}
+
+function NoteItem({
+  note,
+  isRoot = false,
+  selectedId,
+  hoveredId,
+  setHoveredId,
+  setDragOverCategory,
+  onSelect,
+  onOpenMenu,
+  cloudStatusMap,
+  t,
+}: NoteItemProps) {
+  const isSelected = note.id === selectedId;
+  const isHovered = note.id === hoveredId;
+  return (
+    <div
+      key={note.id}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData("text/plain", note.id);
+        e.dataTransfer.effectAllowed = "move";
+      }}
+      onDragEnd={() => setDragOverCategory(null)}
+      onClick={() => onSelect(note.id)}
+      onContextMenu={(event) => onOpenMenu(event, note.id)}
+      onMouseEnter={() => setHoveredId(note.id)}
+      onMouseLeave={() => setHoveredId(null)}
+      className={`w-full text-left transition-all duration-[600ms] cursor-pointer group relative select-none note-drag ${
+        isRoot ? "rounded-xl px-3 py-2.5" : "rounded-lg mx-1 px-2.5 py-2"
+      } ${isSelected ? "bg-bamboo-mist/70" : isHovered ? "bg-paper-warm/70" : "bg-transparent"}`}
+      style={isRoot ? undefined : { width: "calc(100% - 8px)" }}
+    >
+      <div
+        className={`absolute left-0 top-1/2 -translate-y-1/2 w-[3px] rounded-r-full bg-bamboo/60 transition-all duration-[600ms] ${
+          isSelected ? "h-5 opacity-100" : "h-0 opacity-0"
+        }`}
+      />
+      <div className="flex items-baseline justify-between mb-0.5">
+        <span
+          className={`text-[13px] font-display font-medium truncate pr-2 transition-colors ${
+            isSelected ? "text-bamboo" : "text-ink-soft"
+          }`}
+        >
+          {getDisplayTitle(note, t)}
+        </span>
+        <span className="text-[10px] text-ink-ghost font-mono tabular-nums shrink-0">
+          {formatShortDate(note.updatedAt)}
+        </span>
+      </div>
+      <p className="text-[11px] text-ink-ghost leading-relaxed line-clamp-2 group-hover:text-ink-faint transition-colors">
+        {note.preview || t("common.blankNote", { defaultValue: "空白笔记" })}
+      </p>
+      <div className="flex items-center gap-2 mt-1">
+        <span className="text-[10px] text-ink-ghost/60 font-mono tabular-nums">
+          {formatTime(note.updatedAt)}
+        </span>
+        <span className="text-[10px] text-ink-ghost/40">·</span>
+        <span className="text-[10px] text-ink-ghost/60 font-mono tabular-nums">
+          {t("common.wordCount", {
+            count: note.wordCount,
+            defaultValue: "{{count}} 字",
+          })}
+        </span>
+        {cloudStatusMap[note.id] && (
+          <svg
+            className="ml-auto text-bamboo/70 shrink-0"
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+          >
+            <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" />
+          </svg>
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface CategoryNodeProps {
+  node: CategoryTreeNode;
+  level: number;
+  selectedId: string | null;
+  hoveredId: string | null;
+  setHoveredId: (id: string | null) => void;
+  renamingCategory: string | null;
+  renameCategoryValue: string;
+  setRenameCategoryValue: (v: string) => void;
+  collapsedCategories: Set<string>;
+  toggleCategoryCollapse: (cat: string) => void;
+  dragOverCategory: string | null;
+  setDragOverCategory: (cat: string | null) => void;
+  handleMoveNote: (noteId: string, targetCategory: string) => void;
+  handleSelectNote: (id: string) => void;
+  handleOpenNoteMenu: (event: MouseEvent<HTMLElement>, id: string) => void;
+  setRenamingCategory: (cat: string | null) => void;
+  handleRenameCategory: (oldName: string) => void;
+  setCategoryMenu: (state: CategoryMenuState | null) => void;
+  setCategoryMenuClosing: (v: boolean) => void;
+  setCategoryMenuConfirmDelete: (v: boolean) => void;
+  cloudStatusMap: Record<string, boolean>;
+  t: TFunction;
+}
+
+function CategoryNode({
+  node,
+  level,
+  selectedId,
+  hoveredId,
+  setHoveredId,
+  renamingCategory,
+  renameCategoryValue,
+  setRenameCategoryValue,
+  collapsedCategories,
+  toggleCategoryCollapse,
+  dragOverCategory,
+  setDragOverCategory,
+  handleMoveNote,
+  handleSelectNote,
+  handleOpenNoteMenu,
+  setRenamingCategory,
+  handleRenameCategory,
+  setCategoryMenu,
+  setCategoryMenuClosing,
+  setCategoryMenuConfirmDelete,
+  cloudStatusMap,
+  t,
+}: CategoryNodeProps) {
+  const isCollapsed = collapsedCategories.has(node.category);
+  return (
+    <div key={node.category} className="px-2 mb-0.5" style={{ paddingLeft: `${level * 12}px` }}>
+      <div
+        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg group/cat cursor-pointer select-none transition-all duration-200 ${
+          dragOverCategory === node.category
+            ? "bg-bamboo/15 border border-bamboo/40 ring-1 ring-bamboo/20"
+            : isCollapsed
+              ? "bg-transparent border border-bamboo/15"
+              : "bg-bamboo/8 border border-bamboo/15 rounded-b-none"
+        }`}
+        onClick={() => toggleCategoryCollapse(node.category)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setCategoryMenu({
+            x: e.clientX,
+            y: e.clientY,
+            category: node.category,
+          });
+          setCategoryMenuClosing(false);
+          setCategoryMenuConfirmDelete(false);
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          setDragOverCategory(node.category);
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.parentElement?.contains(e.relatedTarget as Node)) {
+            setDragOverCategory(null);
+          }
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOverCategory(null);
+          const noteId = e.dataTransfer.getData("text/plain");
+          if (noteId) void handleMoveNote(noteId, node.category);
+        }}
+      >
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={`text-bamboo/50 shrink-0 transition-transform duration-200 ${
+            isCollapsed ? "" : "rotate-90"
+          }`}
+        >
+          <polyline points="9 18 15 12 9 6" />
+        </svg>
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="text-bamboo/50 shrink-0"
+        >
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+        </svg>
+        {renamingCategory === node.category ? (
+          <input
+            type="text"
+            autoFocus
+            value={renameCategoryValue}
+            onChange={(e) => setRenameCategoryValue(e.target.value)}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Enter") void handleRenameCategory(node.category);
+              if (e.key === "Escape") setRenamingCategory(null);
+            }}
+            onBlur={() => void handleRenameCategory(node.category)}
+            onClick={(e) => e.stopPropagation()}
+            className="flex-1 min-w-0 px-1 text-[10px] font-mono text-ink bg-paper-warm/80 border border-bamboo/30 rounded"
+          />
+        ) : (
+          <span className="text-[11px] text-bamboo/70 font-medium truncate">{node.name}</span>
+        )}
+        <span className="text-[9px] text-bamboo/40 font-mono ml-auto shrink-0">
+          {node.notes.length}
+        </span>
+      </div>
+
+      <div className={`category-body ${isCollapsed ? "" : "expanded"}`}>
+        <div
+          className="category-body-inner bg-bamboo/[0.03] border border-t-0 border-bamboo/10 rounded-b-lg pb-1 pt-1"
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            setDragOverCategory(node.category);
+          }}
+          onDragLeave={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+              setDragOverCategory(null);
+            }
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragOverCategory(null);
+            const noteId = e.dataTransfer.getData("text/plain");
+            if (noteId) void handleMoveNote(noteId, node.category);
+          }}
+        >
+          {node.notes.length === 0 && node.children.length === 0 ? (
+            <div className="px-3 py-3 text-center text-[11px] text-ink-ghost/50">
+              {t("main.category.emptyFolder", { defaultValue: "空文件夹" })}
+            </div>
+          ) : (
+            <>
+              {node.notes.map((note) => (
+                <NoteItem
+                  key={note.id}
+                  note={note}
+                  isRoot={false}
+                  selectedId={selectedId}
+                  hoveredId={hoveredId}
+                  setHoveredId={setHoveredId}
+                  setDragOverCategory={setDragOverCategory}
+                  onSelect={handleSelectNote}
+                  onOpenMenu={handleOpenNoteMenu}
+                  cloudStatusMap={cloudStatusMap}
+                  t={t}
+                />
+              ))}
+              {node.children.map((child) => (
+                <CategoryNode
+                  key={child.category}
+                  node={child}
+                  level={level + 1}
+                  selectedId={selectedId}
+                  hoveredId={hoveredId}
+                  setHoveredId={setHoveredId}
+                  renamingCategory={renamingCategory}
+                  renameCategoryValue={renameCategoryValue}
+                  setRenameCategoryValue={setRenameCategoryValue}
+                  collapsedCategories={collapsedCategories}
+                  toggleCategoryCollapse={toggleCategoryCollapse}
+                  dragOverCategory={dragOverCategory}
+                  setDragOverCategory={setDragOverCategory}
+                  handleMoveNote={handleMoveNote}
+                  handleSelectNote={handleSelectNote}
+                  handleOpenNoteMenu={handleOpenNoteMenu}
+                  setRenamingCategory={setRenamingCategory}
+                  handleRenameCategory={handleRenameCategory}
+                  setCategoryMenu={setCategoryMenu}
+                  setCategoryMenuClosing={setCategoryMenuClosing}
+                  setCategoryMenuConfirmDelete={setCategoryMenuConfirmDelete}
+                  cloudStatusMap={cloudStatusMap}
+                  t={t}
+                />
+              ))}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function MainWindow({
   initialSettingsOpen = false,
   initialConfig = undefined,
@@ -1487,13 +1795,15 @@ export function MainWindow({
     const name = categoryInputValue.trim();
     if (!name) {
       setShowCategoryInput(false);
+      setCategoryInputValue("");
       return;
     }
+    // Close input immediately so Enter + onBlur don't double-submit.
+    setShowCategoryInput(false);
+    setCategoryInputValue("");
     try {
       await createCategory(name);
       await refreshNotes();
-      setShowCategoryInput(false);
-      setCategoryInputValue("");
     } catch (error) {
       showToast(getErrorMessage(error));
     }
@@ -1724,200 +2034,6 @@ export function MainWindow({
   const aboutButtonTitle = aboutUpdateReminder.hasPendingUpdate
     ? aboutButtonLabel
     : t("main.window.about", { defaultValue: "关于" });
-
-  const renderNoteItem = (note: NoteMetadata, isRoot: boolean) => {
-    const isSelected = note.id === selectedId;
-    const isHovered = note.id === hoveredId;
-    return (
-      <div
-        key={note.id}
-        draggable
-        onDragStart={(e) => {
-          e.dataTransfer.setData("text/plain", note.id);
-          e.dataTransfer.effectAllowed = "move";
-        }}
-        onDragEnd={() => setDragOverCategory(null)}
-        onClick={() => void handleSelectNote(note.id)}
-        onContextMenu={(event) => handleOpenNoteMenu(event, note.id)}
-        onMouseEnter={() => setHoveredId(note.id)}
-        onMouseLeave={() => setHoveredId(null)}
-        className={`w-full text-left transition-all duration-[600ms] cursor-pointer group relative ${
-          isRoot ? "rounded-xl px-3 py-2.5" : "rounded-lg mx-1 px-2.5 py-2"
-        } ${isSelected ? "bg-bamboo-mist/70" : isHovered ? "bg-paper-warm/70" : "bg-transparent"}`}
-        style={isRoot ? undefined : { width: "calc(100% - 8px)" }}
-      >
-        <div
-          className={`absolute left-0 top-1/2 -translate-y-1/2 w-[3px] rounded-r-full bg-bamboo/60 transition-all duration-[600ms] ${
-            isSelected ? "h-5 opacity-100" : "h-0 opacity-0"
-          }`}
-        />
-        <div className="flex items-baseline justify-between mb-0.5">
-          <span
-            className={`text-[13px] font-display font-medium truncate pr-2 transition-colors ${
-              isSelected ? "text-bamboo" : "text-ink-soft"
-            }`}
-          >
-            {getDisplayTitle(note, t)}
-          </span>
-          <span className="text-[10px] text-ink-ghost font-mono tabular-nums shrink-0">
-            {formatShortDate(note.updatedAt)}
-          </span>
-        </div>
-        <p className="text-[11px] text-ink-ghost leading-relaxed line-clamp-2 group-hover:text-ink-faint transition-colors">
-          {note.preview || t("common.blankNote", { defaultValue: "空白笔记" })}
-        </p>
-        <div className="flex items-center gap-2 mt-1">
-          <span className="text-[10px] text-ink-ghost/60 font-mono tabular-nums">
-            {formatTime(note.updatedAt)}
-          </span>
-          <span className="text-[10px] text-ink-ghost/40">·</span>
-          <span className="text-[10px] text-ink-ghost/60 font-mono tabular-nums">
-            {t("common.wordCount", {
-              count: note.wordCount,
-              defaultValue: "{{count}} 字",
-            })}
-          </span>
-          {cloudStatusMap[note.id] && (
-            <svg
-              className="ml-auto text-bamboo/70 shrink-0"
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-            >
-              <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" />
-            </svg>
-          )}
-        </div>
-      </div>
-    );
-  };
-
-  const renderCategoryNode = (node: CategoryTreeNode, level: number) => {
-    const isCollapsed = collapsedCategories.has(node.category);
-    return (
-      <div key={node.category} className="px-2 mb-0.5" style={{ paddingLeft: `${level * 12}px` }}>
-        <div
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg group/cat cursor-pointer select-none transition-all duration-200 ${
-            dragOverCategory === node.category
-              ? "bg-bamboo/15 border border-bamboo/40 ring-1 ring-bamboo/20"
-              : isCollapsed
-                ? "bg-transparent border border-bamboo/15"
-                : "bg-bamboo/8 border border-bamboo/15 rounded-b-none"
-          }`}
-          onClick={() => toggleCategoryCollapse(node.category)}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setCategoryMenu({
-              x: e.clientX,
-              y: e.clientY,
-              category: node.category,
-            });
-            setCategoryMenuClosing(false);
-            setCategoryMenuConfirmDelete(false);
-          }}
-          onDragOver={(e) => {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = "move";
-            setDragOverCategory(node.category);
-          }}
-          onDragLeave={(e) => {
-            if (!e.currentTarget.parentElement?.contains(e.relatedTarget as Node)) {
-              setDragOverCategory(null);
-            }
-          }}
-          onDrop={(e) => {
-            e.preventDefault();
-            setDragOverCategory(null);
-            const noteId = e.dataTransfer.getData("text/plain");
-            if (noteId) void handleMoveNote(noteId, node.category);
-          }}
-        >
-          <svg
-            width="10"
-            height="10"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={`text-bamboo/50 shrink-0 transition-transform duration-200 ${isCollapsed ? "" : "rotate-90"}`}
-          >
-            <polyline points="9 18 15 12 9 6" />
-          </svg>
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="text-bamboo/50 shrink-0"
-          >
-            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-          </svg>
-          {renamingCategory === node.category ? (
-            <input
-              type="text"
-              autoFocus
-              value={renameCategoryValue}
-              onChange={(e) => setRenameCategoryValue(e.target.value)}
-              onKeyDown={(e) => {
-                e.stopPropagation();
-                if (e.key === "Enter") void handleRenameCategory(node.category);
-                if (e.key === "Escape") setRenamingCategory(null);
-              }}
-              onBlur={() => void handleRenameCategory(node.category)}
-              onClick={(e) => e.stopPropagation()}
-              className="flex-1 min-w-0 px-1 text-[10px] font-mono text-ink bg-paper-warm/80 border border-bamboo/30 rounded"
-            />
-          ) : (
-            <span className="text-[11px] text-bamboo/70 font-medium truncate">{node.name}</span>
-          )}
-          <span className="text-[9px] text-bamboo/40 font-mono ml-auto shrink-0">
-            {node.notes.length}
-          </span>
-        </div>
-
-        <div className={`category-body ${isCollapsed ? "" : "expanded"}`}>
-          <div
-            className="category-body-inner bg-bamboo/[0.03] border border-t-0 border-bamboo/10 rounded-b-lg pb-1 pt-1"
-            onDragOver={(e) => {
-              e.preventDefault();
-              e.dataTransfer.dropEffect = "move";
-              setDragOverCategory(node.category);
-            }}
-            onDragLeave={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-                setDragOverCategory(null);
-              }
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragOverCategory(null);
-              const noteId = e.dataTransfer.getData("text/plain");
-              if (noteId) void handleMoveNote(noteId, node.category);
-            }}
-          >
-            {node.notes.length === 0 && node.children.length === 0 ? (
-              <div className="px-3 py-3 text-center text-[11px] text-ink-ghost/50">
-                {t("main.category.emptyFolder", { defaultValue: "空文件夹" })}
-              </div>
-            ) : (
-              <>
-                {node.notes.map((note) => renderNoteItem(note, false))}
-                {node.children.map((child) => renderCategoryNode(child, level + 1))}
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  };
 
   return (
     <div className="w-full h-screen flex flex-col">
@@ -2249,7 +2365,9 @@ export function MainWindow({
                       }
                     }}
                     onBlur={() => void handleCreateCategory()}
-                    placeholder={t("main.category.placeholder", { defaultValue: "输入分类名…" })}
+                    placeholder={t("main.category.placeholder", {
+                      defaultValue: "输入分类名，可用 / 创建子分类…",
+                    })}
                     className="w-full px-2.5 h-7 rounded-lg text-[12px] font-body text-ink bg-paper-warm/80 border border-paper-deep/40 focus:border-bamboo/30 placeholder:text-ink-ghost/60"
                   />
                 </div>
@@ -2367,77 +2485,21 @@ export function MainWindow({
                             if (noteId) void handleMoveNote(noteId, "");
                           }}
                         >
-                          {group.notes.map((note) => {
-                            const isSelected = note.id === selectedId;
-                            const isHovered = note.id === hoveredId;
-                            return (
-                              <div
-                                key={note.id}
-                                draggable
-                                onDragStart={(e) => {
-                                  e.dataTransfer.setData("text/plain", note.id);
-                                  e.dataTransfer.effectAllowed = "move";
-                                }}
-                                onDragEnd={() => setDragOverCategory(null)}
-                                onClick={() => void handleSelectNote(note.id)}
-                                onContextMenu={(event) => handleOpenNoteMenu(event, note.id)}
-                                onMouseEnter={() => setHoveredId(note.id)}
-                                onMouseLeave={() => setHoveredId(null)}
-                                className={`w-full text-left rounded-xl px-3 py-2.5 transition-all duration-[600ms] cursor-pointer group relative ${
-                                  isSelected
-                                    ? "bg-bamboo-mist/70"
-                                    : isHovered
-                                      ? "bg-paper-warm/70"
-                                      : "bg-transparent"
-                                }`}
-                              >
-                                <div
-                                  className={`absolute left-0 top-1/2 -translate-y-1/2 w-[3px] rounded-r-full bg-bamboo/60 transition-all duration-[600ms] ${
-                                    isSelected ? "h-5 opacity-100" : "h-0 opacity-0"
-                                  }`}
-                                />
-                                <div className="flex items-baseline justify-between mb-0.5">
-                                  <span
-                                    className={`text-[13px] font-display font-medium truncate pr-2 transition-colors ${
-                                      isSelected ? "text-bamboo" : "text-ink-soft"
-                                    }`}
-                                  >
-                                    {getDisplayTitle(note, t)}
-                                  </span>
-                                  <span className="text-[10px] text-ink-ghost font-mono tabular-nums shrink-0">
-                                    {formatShortDate(note.updatedAt)}
-                                  </span>
-                                </div>
-                                <p className="text-[11px] text-ink-ghost leading-relaxed line-clamp-2 group-hover:text-ink-faint transition-colors">
-                                  {note.preview ||
-                                    t("common.blankNote", { defaultValue: "空白笔记" })}
-                                </p>
-                                <div className="flex items-center gap-2 mt-1">
-                                  <span className="text-[10px] text-ink-ghost/60 font-mono tabular-nums">
-                                    {formatTime(note.updatedAt)}
-                                  </span>
-                                  <span className="text-[10px] text-ink-ghost/40">·</span>
-                                  <span className="text-[10px] text-ink-ghost/60 font-mono tabular-nums">
-                                    {t("common.wordCount", {
-                                      count: note.wordCount,
-                                      defaultValue: "{{count}} 字",
-                                    })}
-                                  </span>
-                                  {cloudStatusMap[note.id] && (
-                                    <svg
-                                      className="ml-auto text-bamboo/70 shrink-0"
-                                      width="12"
-                                      height="12"
-                                      viewBox="0 0 24 24"
-                                      fill="currentColor"
-                                    >
-                                      <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" />
-                                    </svg>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
+                          {group.notes.map((note) => (
+                            <NoteItem
+                              key={note.id}
+                              note={note}
+                              isRoot
+                              selectedId={selectedId}
+                              hoveredId={hoveredId}
+                              setHoveredId={setHoveredId}
+                              setDragOverCategory={setDragOverCategory}
+                              onSelect={handleSelectNote}
+                              onOpenMenu={handleOpenNoteMenu}
+                              cloudStatusMap={cloudStatusMap}
+                              t={t}
+                            />
+                          ))}
                         </div>
                       );
                     }
@@ -2447,7 +2509,33 @@ export function MainWindow({
                     }
                   })}
 
-                  {categoryTree.map((node) => renderCategoryNode(node, 0))}
+                  {categoryTree.map((node) => (
+                    <CategoryNode
+                      key={node.category}
+                      node={node}
+                      level={0}
+                      selectedId={selectedId}
+                      hoveredId={hoveredId}
+                      setHoveredId={setHoveredId}
+                      renamingCategory={renamingCategory}
+                      renameCategoryValue={renameCategoryValue}
+                      setRenameCategoryValue={setRenameCategoryValue}
+                      collapsedCategories={collapsedCategories}
+                      toggleCategoryCollapse={toggleCategoryCollapse}
+                      dragOverCategory={dragOverCategory}
+                      setDragOverCategory={setDragOverCategory}
+                      handleMoveNote={handleMoveNote}
+                      handleSelectNote={handleSelectNote}
+                      handleOpenNoteMenu={handleOpenNoteMenu}
+                      setRenamingCategory={setRenamingCategory}
+                      handleRenameCategory={handleRenameCategory}
+                      setCategoryMenu={setCategoryMenu}
+                      setCategoryMenuClosing={setCategoryMenuClosing}
+                      setCategoryMenuConfirmDelete={setCategoryMenuConfirmDelete}
+                      cloudStatusMap={cloudStatusMap}
+                      t={t}
+                    />
+                  ))}
 
                   {!isLoading && filteredNotes.length === 0 && externalFiles.length === 0 && (
                     <div className="px-3 py-8 text-center text-[12px] text-ink-ghost leading-relaxed">
