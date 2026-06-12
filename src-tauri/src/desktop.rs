@@ -2303,12 +2303,23 @@ fn sync_autostart_to_config(app: &AppHandle) {
     };
 
     if let Err(error) = apply_autostart(app, config.autostart) {
-        eprintln!("failed to sync autostart config: {error}");
+        // On Windows the Run registry key may not exist yet; disabling
+        // autostart in that case is a no-op and should not spam the console.
+        if config.autostart || !is_registry_key_missing_error(&*error) {
+            eprintln!("failed to sync autostart config: {error}");
+        }
     }
 }
 
 #[cfg(not(desktop))]
 fn sync_autostart_to_config(_app: &AppHandle) {}
+
+fn is_registry_key_missing_error(error: &dyn std::error::Error) -> bool {
+    let msg = error.to_string().to_lowercase();
+    msg.contains("os error 2")
+        || msg.contains("系统找不到指定的文件")
+        || msg.contains("the system cannot find the file specified")
+}
 
 #[cfg(desktop)]
 fn autostart_enabled(app: &AppHandle, fallback: bool) -> bool {
