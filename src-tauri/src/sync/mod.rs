@@ -4,7 +4,7 @@ pub mod scheduler;
 pub mod state;
 pub mod types;
 
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 use crate::services::notes::{default_store, AppError};
 use oss::{OssClient, OssConfig};
@@ -34,47 +34,44 @@ pub async fn sync_now(app: AppHandle) -> Result<SyncResultDto, AppError> {
         });
     }
 
-    // Get AccessKeySecret from keyring
-    let access_key_secret =
-        scheduler::get_oss_credential_public(&config.oss_access_key_id).unwrap_or_default();
+    // Wait for any running sync (e.g. startup/scheduled) to finish, then run
+    // one manual sync ourselves. This keeps the UI button in loading state
+    // instead of showing an error toast.
+    const MAX_WAIT_MS: u64 = 30000;
+    const POLL_INTERVAL_MS: u64 = 100;
+    let mut waited = 0u64;
 
-    let oss_config = OssConfig {
-        endpoint: config.oss_endpoint.clone(),
-        bucket: config.oss_bucket.clone(),
-        access_key_id: config.oss_access_key_id.clone(),
-        access_key_secret,
-    };
+    loop {
+        if !scheduler::is_sync_running() {
+            match scheduler::run_sync_task(&app, &config) {
+                Ok(result) => return Ok(result),
+                Err(e) => {
+                    let message = e.to_string();
+                    if message.contains("sync already running") {
+                        // Another sync grabbed the lock between our check and
+                        // the run call; keep waiting.
+                    } else {
+                        return Err(AppError {
+                            code: "sync".into(),
+                            message,
+                            details: Default::default(),
+                        });
+                    }
+                }
+            }
+        }
 
-    let client = OssClient::new(oss_config).map_err(|e| AppError {
-        code: "ossClient".into(),
-        message: e.to_string(),
-        details: Default::default(),
-    })?;
+        if waited >= MAX_WAIT_MS {
+            return Err(AppError {
+                code: "syncTimeout".into(),
+                message: "等待同步完成超时".into(),
+                details: Default::default(),
+            });
+        }
 
-    let store = default_store()?;
-    let state_manager = SyncStateManager::new(&store.base_dir);
-
-    let device_id = hostname::get()
-        .map(|h| h.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "unknown-device".to_string());
-
-    let sync_engine = engine::SyncEngine::new(
-        &client,
-        &store,
-        &state_manager,
-        config.sync_strategy.clone(),
-        device_id,
-        config.oss_remote_prefix.clone(),
-    );
-
-    let result = sync_engine.sync().await.map_err(|e| AppError {
-        code: "sync".into(),
-        message: e.to_string(),
-        details: Default::default(),
-    })?;
-
-    let _ = app.emit("sync-completed", &result);
-    Ok(result)
+        std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
+        waited += POLL_INTERVAL_MS;
+    }
 }
 
 pub fn get_sync_status() -> Result<SyncStatusDto, AppError> {

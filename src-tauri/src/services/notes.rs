@@ -542,6 +542,92 @@ impl NoteStore {
         })
     }
 
+    /// Creates or updates a note while preserving the exact id and metadata.
+    /// Used by sync download to avoid generating a new UUID.
+    pub fn upsert_note_for_sync(
+        &self,
+        id: &str,
+        content: &str,
+        meta: &NoteMetadata,
+    ) -> Result<Note, AppError> {
+        self.ensure_storage()?;
+        let mut metadata_file = self.load_metadata()?;
+        let category = normalize_category_path(&meta.category);
+        let new_path = self.note_path_in_category(&meta.file_name, &category);
+        if let Some(parent) = new_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        if let Some(index) = metadata_file.notes.iter().position(|n| n.id == id) {
+            let old_path = self.note_path_in_category(
+                &metadata_file.notes[index].file_name,
+                &metadata_file.notes[index].category,
+            );
+            if old_path != new_path && old_path.exists() {
+                trash::delete(&old_path)
+                    .map_err(|e| AppError::new("trash", format!("移入回收站失败: {e}")))?;
+            }
+            metadata_file.notes[index] = NoteMetadata {
+                id: id.to_string(),
+                title: meta.title.clone(),
+                file_name: meta.file_name.clone(),
+                category: category.clone(),
+                created_at: meta.created_at,
+                updated_at: meta.updated_at,
+                word_count: meta.word_count,
+                preview: preview(content),
+                trashed_at: None,
+            };
+        } else if let Some(trash_index) =
+            metadata_file.trashed_notes.iter().position(|n| n.id == id)
+        {
+            let mut note = metadata_file.trashed_notes.remove(trash_index);
+            let trash_dir = self.trash_dir(id);
+            if trash_dir.exists() {
+                let _ = fs::remove_dir_all(&trash_dir);
+            }
+            let old_path = self.note_path_in_category(&note.file_name, &note.category);
+            if old_path != new_path && old_path.exists() {
+                trash::delete(&old_path)
+                    .map_err(|e| AppError::new("trash", format!("移入回收站失败: {e}")))?;
+            }
+            note.title = meta.title.clone();
+            note.file_name = meta.file_name.clone();
+            note.category = category.clone();
+            note.created_at = meta.created_at;
+            note.updated_at = meta.updated_at;
+            note.word_count = meta.word_count;
+            note.preview = preview(content);
+            note.trashed_at = None;
+            metadata_file.notes.push(note);
+        } else {
+            metadata_file.notes.push(NoteMetadata {
+                id: id.to_string(),
+                title: meta.title.clone(),
+                file_name: meta.file_name.clone(),
+                category: category.clone(),
+                created_at: meta.created_at,
+                updated_at: meta.updated_at,
+                word_count: meta.word_count,
+                preview: preview(content),
+                trashed_at: None,
+            });
+        }
+
+        fs::write(&new_path, content)?;
+        self.save_metadata(&metadata_file)?;
+        Ok(Note {
+            id: id.to_string(),
+            title: meta.title.clone(),
+            file_name: meta.file_name.clone(),
+            category,
+            created_at: meta.created_at,
+            updated_at: meta.updated_at,
+            word_count: meta.word_count,
+            content: content.to_string(),
+        })
+    }
+
     pub fn update_note(&self, id: &str, request: SaveNoteRequest) -> Result<Note, AppError> {
         self.ensure_storage()?;
         let mut metadata_file = self.load_metadata()?;

@@ -140,7 +140,7 @@ export function SettingsPanel({
     } catch (error) {
       showToast(
         t("settings.sync.syncError", {
-          message: error instanceof Error ? error.message : String(error),
+          message: error instanceof Error ? error.message : String(JSON.stringify(error)),
           defaultValue: "同步失败",
         }),
       );

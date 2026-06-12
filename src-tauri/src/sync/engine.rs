@@ -232,7 +232,25 @@ impl<'a> SyncEngine<'a> {
             });
         }
 
-        // 2. Preserve remote tombstones (deleted=true) that are not re-uploaded
+        // 2. Preserve remote active entries that are not present locally.
+        // This acts as a safety net if a download failed or the note was created
+        // on another device and has not yet been synced to this device.
+        let permanently_deleted_ids: std::collections::HashSet<String> = self
+            .state_manager
+            .get_permanently_deleted_ids()
+            .into_iter()
+            .collect();
+        for remote_entry in &old_manifest.notes {
+            if !remote_entry.deleted
+                && !local_ids.contains(&remote_entry.id)
+                && !permanently_deleted_ids.contains(&remote_entry.id)
+                && !entries.iter().any(|e| e.id == remote_entry.id)
+            {
+                entries.push(remote_entry.clone());
+            }
+        }
+
+        // 3. Preserve remote tombstones (deleted=true) that are not re-uploaded
         let thirty_days_ago = Utc::now() - chrono::Duration::days(30);
         for remote_entry in &old_manifest.notes {
             if remote_entry.deleted
@@ -243,7 +261,7 @@ impl<'a> SyncEngine<'a> {
             }
         }
 
-        // 3. Add locally permanently-deleted notes as new tombstones
+        // 4. Add locally permanently-deleted notes as new tombstones
         for del_id in self.state_manager.get_permanently_deleted_ids() {
             if !entries.iter().any(|e| e.id == del_id) {
                 entries.push(RemoteNoteEntry {
@@ -487,34 +505,10 @@ impl<'a> SyncEngine<'a> {
         let meta_bytes = self.client.get_object(&self.note_meta_key(note_id)).await?;
         let meta: NoteMetadata = serde_json::from_slice(&meta_bytes)?;
 
-        // Create or update local note
-        let save_request = crate::services::notes::SaveNoteRequest {
-            title: meta.title.clone(),
-            content: content.clone(),
-            category: meta.category.clone(),
-        };
-
-        // Try to update existing note, or create new one
-        match self.store.update_note(note_id, save_request.clone()) {
-            Ok(_) => {
-                // Update successful
-            }
-            Err(_) => {
-                // Note not in active notes — restore from trash if present, preserving original ID
-                if self
-                    .store
-                    .prepare_trashed_for_download(note_id)
-                    .unwrap_or(false)
-                {
-                    let _ = self.store.update_note(note_id, save_request.clone());
-                } else {
-                    let _note = self
-                        .store
-                        .create_note(save_request)
-                        .map_err(|e| SyncError::new("notes", e.to_string()))?;
-                }
-            }
-        }
+        // Create or update local note, preserving the remote id and metadata.
+        self.store
+            .upsert_note_for_sync(note_id, &content, &meta)
+            .map_err(|e| SyncError::new("notes", e.to_string()))?;
 
         // Update state
         self.state_manager.update_note_sync_record(

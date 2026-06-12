@@ -7,7 +7,7 @@ use super::engine::SyncEngine;
 use super::oss::{OssClient, OssConfig};
 use super::state::SyncStateManager;
 use crate::services::notes::default_store;
-use crate::sync::types::SyncError;
+use crate::sync::types::{SyncError, SyncResultDto};
 
 const INITIAL_DELAY: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_secs(30);
@@ -37,7 +37,7 @@ pub fn request_sync() {
     SYNC_REQUESTED.store(true, Ordering::SeqCst);
 }
 
-fn is_sync_running() -> bool {
+pub fn is_sync_running() -> bool {
     SYNC_RUNNING.load(Ordering::SeqCst)
 }
 
@@ -56,7 +56,7 @@ fn maybe_run_startup_sync(app: &AppHandle) -> Result<(), Box<dyn std::error::Err
         return Ok(());
     }
 
-    run_sync_internal(app, &config)?;
+    let _ = run_sync_task(app, &config)?;
     Ok(())
 }
 
@@ -96,7 +96,7 @@ fn poll_scheduled_sync(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>
         }
     }
 
-    run_sync_internal(app, &config)?;
+    let _ = run_sync_task(app, &config)?;
     Ok(())
 }
 
@@ -135,12 +135,12 @@ fn get_interval_seconds(interval: &str) -> Option<u64> {
     }
 }
 
-fn run_sync_internal(
+pub fn run_sync_task(
     app: &AppHandle,
     config: &crate::services::notes::AppConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<SyncResultDto, Box<dyn std::error::Error>> {
     if !set_sync_running_if_not_already() {
-        return Ok(()); // Sync already running
+        return Err("sync already running".into());
     }
 
     let result = tokio::runtime::Builder::new_current_thread()
@@ -185,7 +185,7 @@ fn run_sync_internal(
     match result {
         Ok(sync_result) => {
             let _ = app.emit("sync-completed", &sync_result);
-            Ok(())
+            Ok(sync_result)
         }
         Err(e) => {
             let _ = app.emit("sync-error", e.to_string());
