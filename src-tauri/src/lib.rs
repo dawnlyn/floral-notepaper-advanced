@@ -8,6 +8,7 @@ pub mod updater;
 use locales::Locale;
 use services::notes::{default_store, AppConfig, AppError, Note, NoteMetadata, SaveNoteRequest};
 use std::{env, fs, io::Write, path::PathBuf};
+use sync::state::SyncStateManager;
 use tauri::{AppHandle, Emitter, Manager};
 
 #[tauri::command]
@@ -69,15 +70,28 @@ fn notes_restore(app: AppHandle, id: String) -> Result<NoteMetadata, AppError> {
 #[tauri::command]
 fn notes_permanent_delete(app: AppHandle, id: String) -> Result<(), AppError> {
     default_store()?.permanent_delete_note(&id)?;
+    let _ = mark_note_permanently_deleted(&id);
     let _ = app.emit("notes-changed", ());
     Ok(())
 }
 
 #[tauri::command]
 fn notes_empty_trash(app: AppHandle) -> Result<Vec<String>, AppError> {
-    let ids = default_store()?.empty_trash()?;
+    let store = default_store()?;
+    let ids = store.empty_trash()?;
+    let state_manager = SyncStateManager::new(&store.base_dir);
+    for id in &ids {
+        state_manager.mark_permanently_deleted(id);
+    }
     let _ = app.emit("notes-changed", ());
     Ok(ids)
+}
+
+fn mark_note_permanently_deleted(id: &str) -> Result<(), AppError> {
+    let store = default_store()?;
+    let state_manager = SyncStateManager::new(&store.base_dir);
+    state_manager.mark_permanently_deleted(id);
+    Ok(())
 }
 
 #[tauri::command]

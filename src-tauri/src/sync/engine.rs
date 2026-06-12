@@ -306,9 +306,11 @@ impl<'a> SyncEngine<'a> {
         let perm_deleted_set: std::collections::HashSet<&String> =
             permanently_deleted_ids.iter().collect();
 
-        // 1. Permanent delete propagation: local permanently deleted AND still active on remote → DeleteRemote
+        // 1. Permanent delete propagation: local permanently deleted -> DeleteRemote
+        // We also delete when the note is no longer in the remote manifest (e.g. manifest
+        // was previously cleared) so that orphaned note files on OSS are cleaned up.
         for id in permanently_deleted_ids {
-            if remote_active.contains_key(id) {
+            if !remote_deleted_ids.contains(id) {
                 actions.push(SyncAction::DeleteRemote {
                     note_id: id.clone(),
                 });
