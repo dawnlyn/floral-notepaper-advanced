@@ -122,6 +122,7 @@ pub struct NoteMetadata {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub word_count: usize,
+    #[serde(default)]
     pub preview: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trashed_at: Option<DateTime<Utc>>,
