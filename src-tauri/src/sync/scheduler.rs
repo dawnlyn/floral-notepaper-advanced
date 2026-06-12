@@ -41,10 +41,6 @@ pub fn is_sync_running() -> bool {
     SYNC_RUNNING.load(Ordering::SeqCst)
 }
 
-fn set_sync_running(running: bool) {
-    SYNC_RUNNING.store(running, Ordering::SeqCst);
-}
-
 fn maybe_run_startup_sync(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let config = default_store()?.load_config()?;
 
@@ -56,7 +52,10 @@ fn maybe_run_startup_sync(app: &AppHandle) -> Result<(), Box<dyn std::error::Err
         return Ok(());
     }
 
-    let _ = run_sync_task(app, &config)?;
+    let _ = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(run_sync_task(app, &config))?;
     Ok(())
 }
 
@@ -96,7 +95,10 @@ fn poll_scheduled_sync(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>
         }
     }
 
-    let _ = run_sync_task(app, &config)?;
+    let _ = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(run_sync_task(app, &config))?;
     Ok(())
 }
 
@@ -135,52 +137,65 @@ fn get_interval_seconds(interval: &str) -> Option<u64> {
     }
 }
 
-pub fn run_sync_task(
+/// Guard that clears the `SYNC_RUNNING` flag when dropped, so a panic inside
+/// the sync task does not leave the flag set forever.
+struct SyncRunningGuard;
+
+impl SyncRunningGuard {
+    fn acquire() -> Option<Self> {
+        match SYNC_RUNNING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => Some(SyncRunningGuard),
+            Err(_) => None,
+        }
+    }
+}
+
+impl Drop for SyncRunningGuard {
+    fn drop(&mut self) {
+        SYNC_RUNNING.store(false, Ordering::SeqCst);
+    }
+}
+
+pub async fn run_sync_task(
     app: &AppHandle,
     config: &crate::services::notes::AppConfig,
 ) -> Result<SyncResultDto, Box<dyn std::error::Error>> {
-    if !set_sync_running_if_not_already() {
-        return Err("sync already running".into());
-    }
+    let _guard = SyncRunningGuard::acquire().ok_or("sync already running")?;
 
-    let result = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?
-        .block_on(async {
-            // Get AccessKeySecret from keyring
-            let access_key_secret =
-                get_oss_credential(&config.oss_access_key_id).unwrap_or_default();
+    eprintln!("sync task started");
 
-            let oss_config = OssConfig {
-                endpoint: config.oss_endpoint.clone(),
-                bucket: config.oss_bucket.clone(),
-                access_key_id: config.oss_access_key_id.clone(),
-                access_key_secret,
-            };
+    // Get AccessKeySecret from keyring
+    let access_key_secret = get_oss_credential(&config.oss_access_key_id).unwrap_or_default();
 
-            let client = OssClient::new(oss_config).map_err(SyncError::from)?;
+    let oss_config = OssConfig {
+        endpoint: config.oss_endpoint.clone(),
+        bucket: config.oss_bucket.clone(),
+        access_key_id: config.oss_access_key_id.clone(),
+        access_key_secret,
+    };
 
-            let store = default_store().map_err(SyncError::from)?;
+    let client = OssClient::new(oss_config).map_err(SyncError::from)?;
 
-            let state_manager = SyncStateManager::new(&store.base_dir);
+    let store = default_store().map_err(SyncError::from)?;
 
-            let device_id = get_device_id();
-            let strategy = config.sync_strategy.clone();
-            let remote_prefix = config.oss_remote_prefix.clone();
+    let state_manager = SyncStateManager::new(&store.base_dir);
 
-            let engine = SyncEngine::new(
-                &client,
-                &store,
-                &state_manager,
-                strategy,
-                device_id,
-                remote_prefix,
-            );
+    let device_id = get_device_id();
+    let strategy = config.sync_strategy.clone();
+    let remote_prefix = config.oss_remote_prefix.clone();
 
-            engine.sync().await
-        });
+    let engine = SyncEngine::new(
+        &client,
+        &store,
+        &state_manager,
+        strategy,
+        device_id,
+        remote_prefix,
+    );
 
-    set_sync_running(false);
+    let result = engine.sync().await;
+
+    eprintln!("sync task finished: {result:?}");
 
     match result {
         Ok(sync_result) => {
@@ -192,11 +207,6 @@ pub fn run_sync_task(
             Err(Box::from(e))
         }
     }
-}
-
-fn set_sync_running_if_not_already() -> bool {
-    let was_running = SYNC_RUNNING.swap(true, Ordering::SeqCst);
-    !was_running
 }
 
 fn get_device_id() -> String {

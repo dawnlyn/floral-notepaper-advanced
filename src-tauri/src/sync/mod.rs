@@ -43,7 +43,7 @@ pub async fn sync_now(app: AppHandle) -> Result<SyncResultDto, AppError> {
 
     loop {
         if !scheduler::is_sync_running() {
-            match scheduler::run_sync_task(&app, &config) {
+            match scheduler::run_sync_task(&app, &config).await {
                 Ok(result) => return Ok(result),
                 Err(e) => {
                     let message = e.to_string();
