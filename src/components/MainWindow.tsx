@@ -52,7 +52,7 @@ import {
   trashNote,
   updateNote,
 } from "../features/notes/api";
-import { cleanUnusedImages, saveImageFromPath } from "../features/images/api";
+import { cleanUnusedImages, saveImage } from "../features/images/api";
 import { useImagePaste, insertTextAtCursor } from "../features/images/useImagePaste";
 import { useImageBaseDir } from "../features/images/useImageBaseDir";
 import type { ExternalFile, Note, NoteMetadata } from "../features/notes/types";
@@ -112,6 +112,25 @@ type FormatAction =
   | "quote"
   | "inlineMath"
   | "blockMath";
+
+const NOTE_DRAG_MIME = "application/x-floral-note";
+const CATEGORY_DRAG_MIME = "application/x-floral-category";
+
+function getDragNoteId(dataTransfer: DataTransfer): string | null {
+  return dataTransfer.getData(NOTE_DRAG_MIME) || null;
+}
+
+function getDragCategory(dataTransfer: DataTransfer): string | null {
+  return dataTransfer.getData(CATEGORY_DRAG_MIME) || null;
+}
+
+function hasDragType(dataTransfer: DataTransfer, mime: string): boolean {
+  return Array.from(dataTransfer.types).includes(mime);
+}
+
+function lastCategorySegment(category: string): string {
+  return category.split("/").pop() ?? category;
+}
 
 function applyFormat(
   textarea: HTMLTextAreaElement,
@@ -326,7 +345,7 @@ function NoteItem({
       key={note.id}
       draggable
       onDragStart={(e) => {
-        e.dataTransfer.setData("text/plain", note.id);
+        e.dataTransfer.setData(NOTE_DRAG_MIME, note.id);
         e.dataTransfer.effectAllowed = "move";
       }}
       onDragEnd={() => setDragOverCategory(null)}
@@ -400,6 +419,7 @@ interface CategoryNodeProps {
   dragOverCategory: string | null;
   setDragOverCategory: (cat: string | null) => void;
   handleMoveNote: (noteId: string, targetCategory: string) => void;
+  handleMoveCategory: (sourceCategory: string, targetCategory: string) => void;
   handleSelectNote: (id: string) => void;
   handleOpenNoteMenu: (event: MouseEvent<HTMLElement>, id: string) => void;
   setRenamingCategory: (cat: string | null) => void;
@@ -425,6 +445,7 @@ function CategoryNode({
   dragOverCategory,
   setDragOverCategory,
   handleMoveNote,
+  handleMoveCategory,
   handleSelectNote,
   handleOpenNoteMenu,
   setRenamingCategory,
@@ -446,6 +467,7 @@ function CategoryNode({
               ? "bg-transparent border border-bamboo/15"
               : "bg-bamboo/8 border border-bamboo/15 rounded-b-none"
         }`}
+        draggable
         onClick={() => toggleCategoryCollapse(node.category)}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -458,8 +480,17 @@ function CategoryNode({
           setCategoryMenuClosing(false);
           setCategoryMenuConfirmDelete(false);
         }}
+        onDragStart={(e) => {
+          e.dataTransfer.setData(CATEGORY_DRAG_MIME, node.category);
+          e.dataTransfer.effectAllowed = "move";
+        }}
+        onDragEnd={() => setDragOverCategory(null)}
         onDragOver={(e) => {
+          const hasNote = hasDragType(e.dataTransfer, NOTE_DRAG_MIME);
+          const hasCategory = hasDragType(e.dataTransfer, CATEGORY_DRAG_MIME);
+          if (!hasNote && !hasCategory) return;
           e.preventDefault();
+          e.stopPropagation();
           e.dataTransfer.dropEffect = "move";
           setDragOverCategory(node.category);
         }}
@@ -470,9 +501,17 @@ function CategoryNode({
         }}
         onDrop={(e) => {
           e.preventDefault();
+          e.stopPropagation();
           setDragOverCategory(null);
-          const noteId = e.dataTransfer.getData("text/plain");
-          if (noteId) void handleMoveNote(noteId, node.category);
+          const noteId = getDragNoteId(e.dataTransfer);
+          if (noteId) {
+            void handleMoveNote(noteId, node.category);
+            return;
+          }
+          const sourceCategory = getDragCategory(e.dataTransfer);
+          if (sourceCategory) {
+            void handleMoveCategory(sourceCategory, node.category);
+          }
         }}
       >
         <svg
@@ -530,7 +569,11 @@ function CategoryNode({
         <div
           className="category-body-inner bg-bamboo/[0.03] border border-t-0 border-bamboo/10 rounded-b-lg pb-1 pt-1"
           onDragOver={(e) => {
+            const hasNote = hasDragType(e.dataTransfer, NOTE_DRAG_MIME);
+            const hasCategory = hasDragType(e.dataTransfer, CATEGORY_DRAG_MIME);
+            if (!hasNote && !hasCategory) return;
             e.preventDefault();
+            e.stopPropagation();
             e.dataTransfer.dropEffect = "move";
             setDragOverCategory(node.category);
           }}
@@ -541,9 +584,17 @@ function CategoryNode({
           }}
           onDrop={(e) => {
             e.preventDefault();
+            e.stopPropagation();
             setDragOverCategory(null);
-            const noteId = e.dataTransfer.getData("text/plain");
-            if (noteId) void handleMoveNote(noteId, node.category);
+            const noteId = getDragNoteId(e.dataTransfer);
+            if (noteId) {
+              void handleMoveNote(noteId, node.category);
+              return;
+            }
+            const sourceCategory = getDragCategory(e.dataTransfer);
+            if (sourceCategory) {
+              void handleMoveCategory(sourceCategory, node.category);
+            }
           }}
         >
           {node.notes.length === 0 && node.children.length === 0 ? (
@@ -583,6 +634,7 @@ function CategoryNode({
                   dragOverCategory={dragOverCategory}
                   setDragOverCategory={setDragOverCategory}
                   handleMoveNote={handleMoveNote}
+                  handleMoveCategory={handleMoveCategory}
                   handleSelectNote={handleSelectNote}
                   handleOpenNoteMenu={handleOpenNoteMenu}
                   setRenamingCategory={setRenamingCategory}
@@ -893,39 +945,49 @@ export function MainWindow({
     setSaveState("idle");
   }, []);
 
-  const loadExternalFile = useCallback(async (filePath: string) => {
-    try {
-      const [fileContent, mtime] = await Promise.all([
-        readExternalFile(filePath),
-        getFileModifiedTime(filePath),
-      ]);
-      const fileName = filePath.split(/[\\/]/).pop() ?? filePath;
+  const openExternalFileContent = useCallback(
+    (id: string, fileName: string, content: string, mtime: number) => {
       const displayTitle = fileName.replace(/\.(md|txt)$/i, "");
 
       setExternalFiles((current) => {
-        if (current.some((f) => f.id === filePath)) {
+        if (current.some((f) => f.id === id)) {
           return current;
         }
         return [
           ...current,
           {
-            id: filePath,
+            id,
             title: displayTitle,
-            filePath,
+            filePath: id,
           },
         ];
       });
 
-      setSelectedId(filePath);
+      setSelectedId(id);
       setTitle(displayTitle);
-      setContent(fileContent);
+      setContent(content);
       setSaveState("saved");
       setNoteTransitionKey((k) => k + 1);
       externalFileMtimeRef.current = mtime;
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    }
-  }, []);
+    },
+    [],
+  );
+
+  const loadExternalFile = useCallback(
+    async (filePath: string) => {
+      try {
+        const [fileContent, mtime] = await Promise.all([
+          readExternalFile(filePath),
+          getFileModifiedTime(filePath),
+        ]);
+        const fileName = filePath.split(/[\\/]/).pop() ?? filePath;
+        openExternalFileContent(filePath, fileName, fileContent, mtime);
+      } catch (error) {
+        showToast(getErrorMessage(error));
+      }
+    },
+    [openExternalFileContent],
+  );
 
   useEffect(() => {
     try {
@@ -1187,46 +1249,6 @@ export function MainWindow({
       void unlisten.then((fn) => fn());
     };
   }, [loadExternalFile]);
-
-  useEffect(() => {
-    const TEXT_RE = /\.(md|markdown|txt)$/i;
-    const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
-
-    const unlisten = getCurrentWindow().onDragDropEvent((event) => {
-      if (event.payload.type !== "drop") return;
-      const textPaths: string[] = [];
-      const imagePaths: string[] = [];
-
-      for (const p of event.payload.paths) {
-        if (TEXT_RE.test(p)) textPaths.push(p);
-        else if (IMAGE_RE.test(p)) imagePaths.push(p);
-      }
-
-      for (const p of textPaths) {
-        void loadExternalFile(p);
-      }
-
-      if (imagePaths.length > 0 && selectedIdRef.current && !isExternalRef.current) {
-        const noteId = selectedIdRef.current;
-        void (async () => {
-          const textarea = contentRef.current;
-          if (!textarea) return;
-          try {
-            const rels = await Promise.all(imagePaths.map((p) => saveImageFromPath(noteId, p)));
-            const markdown = rels.map((rel) => `![](${rel})`).join("\n");
-            insertTextAtCursor(textarea, setContent, markdown);
-            setSaveState("dirty");
-          } catch (error) {
-            showToast(getErrorMessage(error));
-          }
-        })();
-      }
-    });
-
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, [loadExternalFile, setContent]);
 
   useEffect(() => {
     const unlisten = listen<string>("open-note", (event) => {
@@ -1791,6 +1813,34 @@ export function MainWindow({
     }
   };
 
+  const handleMoveCategory = async (sourceCategory: string, targetCategory: string) => {
+    if (sourceCategory === targetCategory || targetCategory.startsWith(`${sourceCategory}/`)) {
+      return;
+    }
+
+    const newCategory = targetCategory
+      ? `${targetCategory}/${lastCategorySegment(sourceCategory)}`
+      : lastCategorySegment(sourceCategory);
+    if (newCategory === sourceCategory) return;
+
+    try {
+      await renameCategory(sourceCategory, newCategory);
+      await refreshNotes();
+      if (targetCategory) {
+        setCollapsedCategories((previous) => {
+          const next = new Set(previous);
+          next.delete(targetCategory);
+          return next;
+        });
+      }
+      if (activeCategory === sourceCategory || activeCategory.startsWith(`${sourceCategory}/`)) {
+        setActiveCategory(newCategory + activeCategory.slice(sourceCategory.length));
+      }
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  };
+
   const handleCreateCategory = async () => {
     const name = categoryInputValue.trim();
     if (!name) {
@@ -1865,6 +1915,81 @@ export function MainWindow({
       return null;
     }
   }, [selectedId, title, content, activeCategory, replaceNoteMetadata, applyNote]);
+
+  const MAX_DROPPED_IMAGE_SIZE = 20 * 1024 * 1024;
+  const DROPPED_IMAGE_MIME_TO_EXT: Record<string, string> = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "image/bmp": "bmp",
+    "image/svg+xml": "svg",
+  };
+
+  const handleDroppedFiles = useCallback(
+    async (files: FileList) => {
+      const textFiles: File[] = [];
+      const imageFiles: File[] = [];
+      const textExtRe = /\.(md|markdown|txt)$/i;
+
+      for (const file of Array.from(files)) {
+        if (textExtRe.test(file.name)) {
+          textFiles.push(file);
+        } else if (file.type.startsWith("image/")) {
+          imageFiles.push(file);
+        }
+      }
+
+      for (const file of textFiles) {
+        try {
+          const fileContent = await file.text();
+          const fileTitle = file.name.replace(/\.[^.]+$/, "");
+          const note = await createNote({
+            title: fileTitle,
+            content: fileContent,
+            category: activeCategory,
+          });
+          replaceNoteMetadata(note);
+          applyNote(note);
+        } catch (error) {
+          showToast(getErrorMessage(error));
+        }
+      }
+
+      if (imageFiles.length > 0 && selectedIdRef.current && !isExternalRef.current) {
+        const noteId = selectedIdRef.current;
+        const textarea = contentRef.current;
+        if (!textarea) return;
+
+        try {
+          const markdownLines: string[] = [];
+          for (const file of imageFiles) {
+            const ext = DROPPED_IMAGE_MIME_TO_EXT[file.type];
+            if (!ext) continue;
+            if (file.size > MAX_DROPPED_IMAGE_SIZE) {
+              throw new Error(
+                t("errors.imageTooLarge", {
+                  defaultValue: "图片文件过大（上限 20 MB）",
+                }) ?? "图片文件过大（上限 20 MB）",
+              );
+            }
+            const buffer = await file.arrayBuffer();
+            const data = Array.from(new Uint8Array(buffer));
+            const rel = await saveImage(noteId, data, ext);
+            markdownLines.push(`![](${rel})`);
+          }
+
+          if (markdownLines.length > 0) {
+            insertTextAtCursor(textarea, setContent, markdownLines.join("\n"));
+            setSaveState("dirty");
+          }
+        } catch (error) {
+          showToast(getErrorMessage(error));
+        }
+      }
+    },
+    [activeCategory, applyNote, replaceNoteMetadata, setContent, t],
+  );
 
   const {
     handlePaste: imagePasteHandler,
@@ -2036,7 +2161,20 @@ export function MainWindow({
     : t("main.window.about", { defaultValue: "关于" });
 
   return (
-    <div className="w-full h-screen flex flex-col">
+    <div
+      className="w-full h-screen flex flex-col"
+      onDragOver={(event) => {
+        if (event.dataTransfer.files.length > 0) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+        }
+      }}
+      onDrop={(event) => {
+        if (event.dataTransfer.files.length === 0) return;
+        event.preventDefault();
+        void handleDroppedFiles(event.dataTransfer.files);
+      }}
+    >
       <div className="relative noise-bg bg-cloud overflow-hidden flex flex-col flex-1">
         <BackgroundLayer config={settingsConfig} />
         <div
@@ -2373,7 +2511,23 @@ export function MainWindow({
                 </div>
               )}
 
-              <div className="flex-1 overflow-y-auto px-2 pb-2">
+              <div
+                className="flex-1 overflow-y-auto px-2 pb-2"
+                onDragOver={(e) => {
+                  if (!hasDragType(e.dataTransfer, CATEGORY_DRAG_MIME)) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  setDragOverCategory("");
+                }}
+                onDrop={(e) => {
+                  const sourceCategory = getDragCategory(e.dataTransfer);
+                  if (!sourceCategory) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setDragOverCategory(null);
+                  void handleMoveCategory(sourceCategory, "");
+                }}
+              >
                 <div className="space-y-0.5">
                   {externalFiles.length > 0 && (
                     <>
@@ -2469,7 +2623,11 @@ export function MainWindow({
                             dragOverCategory === "" ? "bg-bamboo/10 ring-1 ring-bamboo/20" : ""
                           }`}
                           onDragOver={(e) => {
+                            const hasNote = hasDragType(e.dataTransfer, NOTE_DRAG_MIME);
+                            const hasCategory = hasDragType(e.dataTransfer, CATEGORY_DRAG_MIME);
+                            if (!hasNote && !hasCategory) return;
                             e.preventDefault();
+                            e.stopPropagation();
                             e.dataTransfer.dropEffect = "move";
                             setDragOverCategory("");
                           }}
@@ -2480,9 +2638,17 @@ export function MainWindow({
                           }}
                           onDrop={(e) => {
                             e.preventDefault();
+                            e.stopPropagation();
                             setDragOverCategory(null);
-                            const noteId = e.dataTransfer.getData("text/plain");
-                            if (noteId) void handleMoveNote(noteId, "");
+                            const noteId = getDragNoteId(e.dataTransfer);
+                            if (noteId) {
+                              void handleMoveNote(noteId, "");
+                              return;
+                            }
+                            const sourceCategory = getDragCategory(e.dataTransfer);
+                            if (sourceCategory) {
+                              void handleMoveCategory(sourceCategory, "");
+                            }
                           }}
                         >
                           {group.notes.map((note) => (
@@ -2525,6 +2691,7 @@ export function MainWindow({
                       dragOverCategory={dragOverCategory}
                       setDragOverCategory={setDragOverCategory}
                       handleMoveNote={handleMoveNote}
+                      handleMoveCategory={handleMoveCategory}
                       handleSelectNote={handleSelectNote}
                       handleOpenNoteMenu={handleOpenNoteMenu}
                       setRenamingCategory={setRenamingCategory}

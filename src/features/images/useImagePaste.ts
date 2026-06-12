@@ -131,10 +131,11 @@ export function useImagePaste({
 
   const handleDrop = useCallback(
     (event: React.DragEvent<HTMLTextAreaElement>) => {
+      event.preventDefault();
       if (disabled) return;
       const files = getImageFiles(event.dataTransfer);
       if (files.length === 0) return;
-      event.preventDefault();
+      event.stopPropagation();
       void processFiles(files);
     },
     [disabled, processFiles],
