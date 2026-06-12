@@ -45,6 +45,54 @@ export interface CategoryGroup {
   latestUpdatedAt: string;
 }
 
+export interface CategoryTreeNode {
+  category: string;
+  name: string;
+  notes: NoteMetadata[];
+  latestUpdatedAt: string;
+  children: CategoryTreeNode[];
+}
+
+export function buildCategoryTree(groups: CategoryGroup[]): CategoryTreeNode[] {
+  const roots: CategoryTreeNode[] = [];
+  const sorted = [...groups].sort((a, b) => a.category.localeCompare(b.category));
+
+  for (const group of sorted) {
+    if (!group.category) continue;
+    insertCategoryNode(roots, group);
+  }
+
+  return roots;
+}
+
+function insertCategoryNode(nodes: CategoryTreeNode[], group: CategoryGroup): void {
+  const segments = group.category.split("/");
+  let current = nodes;
+  let path = "";
+
+  for (let i = 0; i < segments.length; i++) {
+    const name = segments[i];
+    path = path ? `${path}/${name}` : name;
+    let node = current.find((n) => n.name === name);
+    if (!node) {
+      node = {
+        category: path,
+        name,
+        notes: [],
+        latestUpdatedAt: "",
+        children: [],
+      };
+      current.push(node);
+      current.sort((a, b) => a.name.localeCompare(b.name));
+    }
+    if (i === segments.length - 1) {
+      node.notes = group.notes;
+      node.latestUpdatedAt = group.latestUpdatedAt;
+    }
+    current = node.children;
+  }
+}
+
 export function groupNotesByCategory(
   notes: NoteMetadata[],
   allCategories: string[] = [],

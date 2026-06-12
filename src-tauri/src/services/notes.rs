@@ -370,6 +370,50 @@ fn is_safe_notes_dir(path: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Normalize a category path: use `/` as the canonical separator, trim
+/// whitespace from each segment, and collapse empty segments.
+fn normalize_category_path(category: &str) -> String {
+    category
+        .replace('\\', "/")
+        .split('/')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn is_valid_category_segment(segment: &str) -> bool {
+    if segment.is_empty() || segment == "." || segment == ".." {
+        return false;
+    }
+    if segment.contains('/') || segment.contains('\\') || segment.contains(':') {
+        return false;
+    }
+    if segment.chars().any(|c| c.is_control()) {
+        return false;
+    }
+    true
+}
+
+fn validate_category_path(name: &str) -> Result<String, AppError> {
+    let normalized_input = name.replace('\\', "/");
+    let raw_segments: Vec<&str> = normalized_input.split('/').collect();
+    if raw_segments.iter().map(|s| s.trim()).any(|s| s.is_empty()) {
+        return Err(AppError::category_name_invalid_chars());
+    }
+
+    let normalized = normalize_category_path(name);
+    if normalized.is_empty() {
+        return Err(AppError::category_name_empty());
+    }
+    for segment in normalized.split('/') {
+        if !is_valid_category_segment(segment) {
+            return Err(AppError::category_name_invalid_chars());
+        }
+    }
+    Ok(normalized)
+}
+
 impl NoteStore {
     pub fn new(base_dir: PathBuf) -> Self {
         Self { base_dir }
@@ -464,7 +508,7 @@ impl NoteStore {
         let now = Utc::now();
         let file_name = self.file_name_for(&id, &request.title);
         let word_count = count_words(&request.content);
-        let category = request.category.clone();
+        let category = normalize_category_path(&request.category);
         let note_path = self.note_path_in_category(&file_name, &category);
         if let Some(parent) = note_path.parent() {
             fs::create_dir_all(parent)?;
@@ -510,7 +554,7 @@ impl NoteStore {
         let old_file_name = note.file_name.clone();
         let old_category = note.category.clone();
         let new_file_name = self.file_name_for(id, &request.title);
-        let new_category = request.category.clone();
+        let new_category = normalize_category_path(&request.category);
         let now = Utc::now();
         let word_count = count_words(&request.content);
 
@@ -824,45 +868,53 @@ impl NoteStore {
         let notes_dir = self.notes_dir()?;
         fs::create_dir_all(&notes_dir)?;
         let mut categories = Vec::new();
-        for entry in fs::read_dir(&notes_dir)? {
-            let entry = entry?;
-            if entry.path().is_dir() {
-                categories.push(entry.file_name().to_string_lossy().to_string());
-            }
-        }
+        self.collect_categories(&notes_dir, "", &mut categories)?;
         categories.sort();
         Ok(categories)
     }
 
+    fn collect_categories(
+        &self,
+        dir: &Path,
+        prefix: &str,
+        out: &mut Vec<String>,
+    ) -> Result<(), AppError> {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                let category = if prefix.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{}/{}", prefix, name)
+                };
+                out.push(category.clone());
+                self.collect_categories(&path, &category, out)?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn create_category(&self, name: &str) -> Result<(), AppError> {
-        let name = name.trim();
-        if name.is_empty() {
-            return Err(AppError::category_name_empty());
-        }
-        if name.contains('/') || name.contains('\\') || name.contains(':') || name.contains("..") {
-            return Err(AppError::category_name_invalid_chars());
-        }
-        let notes_dir = self.notes_dir()?;
-        let path = notes_dir.join(name);
+        let category = validate_category_path(name)?;
+        let path = self.category_path(&category);
         fs::create_dir_all(&path)?;
         Ok(())
     }
 
     pub fn rename_category(&self, old_name: &str, new_name: &str) -> Result<(), AppError> {
-        let new_name = new_name.trim();
-        if new_name.is_empty() {
+        let new_category = validate_category_path(new_name)?;
+        let old_category = normalize_category_path(old_name);
+        if old_category.is_empty() {
             return Err(AppError::category_name_empty());
         }
-        if new_name.contains('/')
-            || new_name.contains('\\')
-            || new_name.contains(':')
-            || new_name.contains("..")
-        {
-            return Err(AppError::category_name_invalid_chars());
+        if new_category == old_category {
+            return Ok(());
         }
-        let notes_dir = self.notes_dir()?;
-        let old_path = notes_dir.join(old_name);
-        let new_path = notes_dir.join(new_name);
+
+        let old_path = self.category_path(&old_category);
+        let new_path = self.category_path(&new_category);
         if !old_path.exists() {
             return Err(AppError::category_not_found(old_name));
         }
@@ -871,10 +923,13 @@ impl NoteStore {
         }
         fs::rename(&old_path, &new_path)?;
 
+        let old_prefix = format!("{}/", old_category);
         let mut metadata_file = self.load_metadata()?;
         for note in &mut metadata_file.notes {
-            if note.category == old_name {
-                note.category = new_name.to_string();
+            if note.category == old_category {
+                note.category = new_category.clone();
+            } else if note.category.starts_with(&old_prefix) {
+                note.category = format!("{}{}", new_category, &note.category[old_category.len()..]);
             }
         }
         self.save_metadata(&metadata_file)?;
@@ -882,8 +937,12 @@ impl NoteStore {
     }
 
     pub fn delete_category(&self, name: &str) -> Result<(), AppError> {
+        let category = normalize_category_path(name);
+        if category.is_empty() {
+            return Err(AppError::category_name_empty());
+        }
         let notes_dir = self.notes_dir()?;
-        let category_path = notes_dir.join(name);
+        let category_path = self.category_path(&category);
         let dir_exists = category_path.exists();
 
         if dir_exists {
@@ -901,11 +960,12 @@ impl NoteStore {
                 ));
             }
 
-            // Move all notes in this category to uncategorized (root)
+            // Move all notes in this category tree to uncategorized (root)
             let mut metadata_file = self.load_metadata()?;
+            let prefix = format!("{}/", category);
             for note in &mut metadata_file.notes {
-                if note.category == name {
-                    let old_path = category_path.join(&note.file_name);
+                if note.category == category || note.category.starts_with(&prefix) {
+                    let old_path = self.note_path_in_category(&note.file_name, &note.category);
                     let new_path = notes_dir.join(&note.file_name);
                     if old_path.exists() {
                         fs::rename(&old_path, &new_path)?;
@@ -923,8 +983,9 @@ impl NoteStore {
             // clean up any stale metadata references.
             let mut metadata_file = self.load_metadata()?;
             let mut changed = false;
+            let prefix = format!("{}/", category);
             for note in &mut metadata_file.notes {
-                if note.category == name {
+                if note.category == category || note.category.starts_with(&prefix) {
                     note.category = String::new();
                     changed = true;
                 }
@@ -950,12 +1011,13 @@ impl NoteStore {
             .ok_or_else(|| AppError::note_not_found(id))?;
 
         let old_category = note.category.clone();
+        let new_category = normalize_category_path(new_category);
         if old_category == new_category {
             return Ok(note.clone());
         }
 
         let old_path = self.note_path_in_category(&note.file_name, &old_category);
-        let new_path = self.note_path_in_category(&note.file_name, new_category);
+        let new_path = self.note_path_in_category(&note.file_name, &new_category);
         if let Some(parent) = new_path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -963,7 +1025,7 @@ impl NoteStore {
             fs::rename(&old_path, &new_path)?;
         }
 
-        note.category = new_category.to_string();
+        note.category = new_category;
         let result = note.clone();
         self.save_metadata(&metadata_file)?;
         Ok(result)
@@ -1134,15 +1196,21 @@ impl NoteStore {
         Ok(PathBuf::from(self.load_config()?.notes_dir))
     }
 
-    fn note_path_in_category(&self, file_name: &str, category: &str) -> PathBuf {
+    fn category_path(&self, category: &str) -> PathBuf {
         let notes_dir = self
             .notes_dir()
             .unwrap_or_else(|_| self.base_dir.join("notes"));
         if category.is_empty() {
-            notes_dir.join(file_name)
+            notes_dir
         } else {
-            notes_dir.join(category).join(file_name)
+            category
+                .split('/')
+                .fold(notes_dir, |path, segment| path.join(segment))
         }
+    }
+
+    fn note_path_in_category(&self, file_name: &str, category: &str) -> PathBuf {
+        self.category_path(category).join(file_name)
     }
 
     fn find_metadata(&self, id: &str) -> Result<NoteMetadata, AppError> {
@@ -1196,25 +1264,37 @@ impl NoteStore {
         let notes_dir = self.notes_dir()?;
         fs::create_dir_all(&notes_dir)?;
         let mut notes = Vec::new();
-
-        self.scan_dir_for_notes(&notes_dir, "", &mut notes)?;
-
-        for entry in fs::read_dir(&notes_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_dir() {
-                let category = entry.file_name().to_string_lossy().to_string();
-                self.scan_dir_for_notes(&path, &category, &mut notes)?;
-            }
-        }
-
+        self.scan_dir_recursive(&notes_dir, "", &mut notes)?;
         Ok(MetadataFile {
             notes,
             trashed_notes: Vec::new(),
         })
     }
 
-    fn scan_dir_for_notes(
+    fn scan_dir_recursive(
+        &self,
+        dir: &Path,
+        category: &str,
+        notes: &mut Vec<NoteMetadata>,
+    ) -> Result<(), AppError> {
+        self.scan_md_files(dir, category, notes)?;
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                let child_category = if category.is_empty() {
+                    name
+                } else {
+                    format!("{}/{}", category, name)
+                };
+                self.scan_dir_recursive(&path, &child_category, notes)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn scan_md_files(
         &self,
         dir: &Path,
         category: &str,
@@ -1866,5 +1946,106 @@ mod tests {
             fs::read_to_string(export_path).expect("read exported markdown"),
             content
         );
+    }
+
+    #[test]
+    fn creates_and_lists_nested_categories() {
+        let store = NoteStore::new(test_root("nested-categories"));
+        store
+            .create_category("产品文档/产品文档1")
+            .expect("create nested category");
+
+        let categories = store.list_categories().expect("list categories");
+        assert!(categories.contains(&"产品文档".to_string()));
+        assert!(categories.contains(&"产品文档/产品文档1".to_string()));
+    }
+
+    #[test]
+    fn moves_note_to_nested_category() {
+        let store = NoteStore::new(test_root("move-nested"));
+        let note = store
+            .create_note(SaveNoteRequest {
+                title: "a".into(),
+                content: "content".into(),
+                category: String::new(),
+            })
+            .expect("create note");
+
+        store
+            .move_note_to_category(&note.id, "产品文档/产品文档1")
+            .expect("move note");
+
+        let listed = store.list_notes().expect("list notes");
+        assert_eq!(listed[0].category, "产品文档/产品文档1");
+        assert!(store
+            .note_path_in_category(&listed[0].file_name, "产品文档/产品文档1")
+            .exists());
+    }
+
+    #[test]
+    fn renames_nested_category() {
+        let store = NoteStore::new(test_root("rename-nested"));
+        let note = store
+            .create_note(SaveNoteRequest {
+                title: "a".into(),
+                content: "content".into(),
+                category: "产品文档/产品文档1".into(),
+            })
+            .expect("create note");
+
+        store
+            .rename_category("产品文档/产品文档1", "产品文档/产品文档2")
+            .expect("rename category");
+
+        let listed = store.list_notes().expect("list notes");
+        assert_eq!(listed[0].category, "产品文档/产品文档2");
+        assert!(store.read_note(&note.id).is_ok());
+    }
+
+    #[test]
+    fn deletes_nested_category_and_moves_notes_to_root() {
+        let store = NoteStore::new(test_root("delete-nested"));
+        let note = store
+            .create_note(SaveNoteRequest {
+                title: "a".into(),
+                content: "content".into(),
+                category: "产品文档/产品文档1".into(),
+            })
+            .expect("create note");
+
+        store.delete_category("产品文档").expect("delete category");
+
+        let listed = store.list_notes().expect("list notes");
+        assert_eq!(listed[0].category, "");
+        assert!(store.read_note(&note.id).is_ok());
+    }
+
+    #[test]
+    fn rebuilds_metadata_for_nested_categories() {
+        let store = NoteStore::new(test_root("rebuild-nested"));
+        let note = store
+            .create_note(SaveNoteRequest {
+                title: "a".into(),
+                content: "content".into(),
+                category: "产品文档/产品文档1".into(),
+            })
+            .expect("create note");
+
+        fs::write(store.metadata_path(), "{ broken json").expect("corrupt metadata");
+
+        let rebuilt = store.list_notes().expect("rebuild and list");
+        assert_eq!(rebuilt.len(), 1);
+        assert_eq!(rebuilt[0].category, "产品文档/产品文档1");
+        assert_eq!(rebuilt[0].id, note.id);
+    }
+
+    #[test]
+    fn rejects_invalid_category_paths() {
+        let store = NoteStore::new(test_root("invalid-categories"));
+        assert!(store.create_category("").is_err());
+        assert!(store.create_category("a/../b").is_err());
+        assert!(store.create_category("a/ /b").is_err());
+        assert!(store.create_category("a/b:c").is_err());
+        assert!(store.create_category("/a/b").is_err());
     }
 }
