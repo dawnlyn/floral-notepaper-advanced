@@ -526,7 +526,11 @@ pub fn run() {
             sync::oss_test_connection_command,
             sync::oss_save_credential_command,
             sync::oss_get_credential_command,
-            sync::sync_get_cloud_status_command
+            sync::sync_get_cloud_status_command,
+            sync::sync_conflicts_list_command,
+            sync::sync_conflict_detail_command,
+            sync::sync_conflict_resolve_command,
+            sync::sync_conflict_resolve_all_command
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

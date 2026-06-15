@@ -4,15 +4,38 @@ export interface ToastItem {
   id: number;
   message: string;
   type?: "error" | "warning" | "info";
+  persistent?: boolean;
 }
 
+type ToastAction = { kind: "show"; item: ToastItem } | { kind: "hide"; id: number };
+
 let nextId = 0;
-const listeners = new Set<(item: ToastItem) => void>();
+const listeners = new Set<(action: ToastAction) => void>();
 
 export function showToast(message: string, type: ToastItem["type"] = "error") {
   const item: ToastItem = { id: nextId++, message, type };
-  listeners.forEach((fn) => fn(item));
+  listeners.forEach((fn) => fn({ kind: "show", item }));
+  return item.id;
 }
+
+export function hideToast(id: number) {
+  listeners.forEach((fn) => fn({ kind: "hide", id }));
+}
+
+export function showLoadingToast(message: string): { close: () => void; id: number } {
+  const item: ToastItem = {
+    id: nextId++,
+    message,
+    type: "info",
+    persistent: true,
+  };
+  listeners.forEach((fn) => fn({ kind: "show", item }));
+  return {
+    id: item.id,
+    close: () => hideToast(item.id),
+  };
+}
+
 const AUTO_DISMISS_MS = 5000;
 const EXIT_DURATION_MS = 200;
 
@@ -56,9 +79,10 @@ function ToastEntry({ item, onDismiss }: { item: ToastItem; onDismiss: (id: numb
   }, [item.id, onDismiss]);
 
   useEffect(() => {
+    if (item.persistent) return;
     timerRef.current = setTimeout(dismiss, AUTO_DISMISS_MS);
     return () => clearTimeout(timerRef.current);
-  }, [dismiss]);
+  }, [dismiss, item.persistent]);
 
   const type = item.type ?? "error";
 
@@ -109,7 +133,13 @@ export function ToastContainer() {
   const [items, setItems] = useState<ToastItem[]>([]);
 
   useEffect(() => {
-    const handler = (item: ToastItem) => setItems((prev) => [...prev.slice(-4), item]);
+    const handler = (action: ToastAction) => {
+      if (action.kind === "show") {
+        setItems((prev) => [...prev.slice(-4), action.item]);
+      } else {
+        setItems((prev) => prev.filter((t) => t.id !== action.id));
+      }
+    };
     listeners.add(handler);
     return () => {
       listeners.delete(handler);
@@ -117,7 +147,7 @@ export function ToastContainer() {
   }, []);
 
   const handleDismiss = useCallback((id: number) => {
-    setItems((prev) => prev.filter((t) => t.id !== id));
+    hideToast(id);
   }, []);
 
   if (items.length === 0) return null;

@@ -77,11 +77,15 @@
     "category": {
       "confirmDelete": "Delete \"{{category}}\"?",
       "confirmDeleteAction": "Confirm Delete",
+      "confirmCreate": "Create",
+      "createNote": "New Note",
+      "createSubcategory": "New Subcategory",
       "delete": "Delete Category",
       "emptyFolder": "Empty Folder",
       "new": "New Category",
       "placeholder": "Enter category name…",
       "rename": "Rename",
+      "subcategoryPlaceholder": "Subcategory name, use / to nest…",
       "uncategorized": "Uncategorized"
     },
     "confirm": {
@@ -163,6 +167,10 @@
       "quickNotepad": "Quick Note",
       "restore": "Restore",
       "settings": "Settings"
+    },
+    "blankMenu": {
+      "newCategory": "New Category",
+      "newNote": "New Note"
     }
   },
   "noteMenu": {
@@ -492,6 +500,34 @@
       "syncing": "Syncing",
       "completed": "Completed",
       "error": "Sync error"
+    },
+    "conflict": {
+      "title": "Resolve Sync Conflicts",
+      "empty": "No pending conflicts",
+      "localVersion": "Local version",
+      "remoteVersion": "Cloud version",
+      "mergedVersion": "Merged version",
+      "chooseLocal": "Use local",
+      "chooseRemote": "Use remote",
+      "merge": "Merge manually",
+      "resolve": "Resolve",
+      "resolveAllLocal": "Resolve all as local",
+      "resolveAllRemote": "Resolve all as remote",
+      "close": "Close",
+      "type": {
+        "contentModified": "content",
+        "titleChanged": "title",
+        "categoryMoved": "category",
+        "deletedLocally": "deleted locally",
+        "deletedRemotely": "deleted remotely"
+      },
+      "field": {
+        "title": "Title",
+        "category": "Category",
+        "updatedAt": "Modified"
+      },
+      "resolveSuccess": "Conflict resolved",
+      "resolveError": "Failed to resolve conflict: {{message}}"
     }
   },
   "recycleBin": {

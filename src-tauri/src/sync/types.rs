@@ -50,6 +50,16 @@ pub struct SyncResultDto {
     pub completed_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictType {
+    pub content_modified: bool,
+    pub title_changed: bool,
+    pub category_moved: bool,
+    pub deleted_locally: bool,
+    pub deleted_remotely: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncConflictDto {
@@ -57,6 +67,47 @@ pub struct SyncConflictDto {
     pub note_title: String,
     pub local_updated_at: String,
     pub remote_updated_at: String,
+    pub conflict_type: ConflictType,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingConflict {
+    pub note_id: String,
+    pub title: String,
+    pub local_updated_at: String,
+    pub remote_updated_at: String,
+    pub local_category: String,
+    pub remote_category: String,
+    pub local_title: String,
+    pub remote_title: String,
+    pub conflict_type: ConflictType,
+    pub resolved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncConflictDetailDto {
+    pub note_id: String,
+    pub local_title: String,
+    pub remote_title: String,
+    pub local_category: String,
+    pub remote_category: String,
+    pub local_updated_at: String,
+    pub remote_updated_at: String,
+    pub local_content: String,
+    pub remote_content: String,
+    pub conflict_type: ConflictType,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictResolution {
+    pub note_id: String,
+    pub choice: String, // "local" | "remote" | "merge"
+    pub merged_title: Option<String>,
+    pub merged_category: Option<String>,
+    pub merged_content: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,6 +149,8 @@ pub struct SyncState {
     pub note_sync_records: HashMap<String, NoteSyncRecord>,
     #[serde(default)]
     pub permanently_deleted: Vec<DeletedNoteRecord>,
+    #[serde(default)]
+    pub pending_conflicts: Vec<PendingConflict>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,6 +179,7 @@ pub enum SyncAction {
         note_id: String,
         local_updated: DateTime<Utc>,
         remote_updated: DateTime<Utc>,
+        conflict_type: ConflictType,
     },
     DeleteLocal {
         note_id: String,

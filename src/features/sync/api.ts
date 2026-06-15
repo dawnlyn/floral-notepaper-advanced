@@ -1,5 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { NoteCloudStatus, SyncResultDto, SyncStatusDto } from "./types";
+import type {
+  ConflictResolution,
+  NoteCloudStatus,
+  PendingConflict,
+  SyncConflictDetailDto,
+  SyncResultDto,
+  SyncStatusDto,
+} from "./types";
 
 export function syncNow(): Promise<SyncResultDto> {
   return invoke("sync_now_command");
@@ -7,6 +14,22 @@ export function syncNow(): Promise<SyncResultDto> {
 
 export function getSyncStatus(): Promise<SyncStatusDto> {
   return invoke("sync_status_command");
+}
+
+export function listSyncConflicts(): Promise<PendingConflict[]> {
+  return invoke("sync_conflicts_list_command");
+}
+
+export function getSyncConflictDetail(noteId: string): Promise<SyncConflictDetailDto> {
+  return invoke("sync_conflict_detail_command", { noteId });
+}
+
+export function resolveSyncConflict(resolution: ConflictResolution): Promise<void> {
+  return invoke("sync_conflict_resolve_command", { resolution });
+}
+
+export function resolveAllSyncConflicts(strategy: "local" | "remote"): Promise<void> {
+  return invoke("sync_conflict_resolve_all_command", { strategy });
 }
 
 export function testOssConnection(

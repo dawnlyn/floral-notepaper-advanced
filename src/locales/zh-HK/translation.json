@@ -77,11 +77,15 @@
     "category": {
       "confirmDelete": "確認刪除「{{category}}」？",
       "confirmDeleteAction": "確認刪除",
+      "confirmCreate": "確認新增",
+      "createNote": "新增筆記",
+      "createSubcategory": "新增子分類",
       "delete": "刪除分類",
       "emptyFolder": "空資料夾",
       "new": "新增分類",
       "placeholder": "輸入分類名稱…",
       "rename": "重新命名",
+      "subcategoryPlaceholder": "子分類名稱，可用 / 巢狀…",
       "uncategorized": "未分類"
     },
     "confirm": {
@@ -163,6 +167,10 @@
       "quickNotepad": "快捷便箋",
       "restore": "還原視窗",
       "settings": "設定"
+    },
+    "blankMenu": {
+      "newCategory": "新增分類",
+      "newNote": "新增筆記"
     }
   },
   "noteMenu": {
@@ -473,6 +481,34 @@
       "syncing": "同步中",
       "completed": "已完成",
       "error": "同步出錯"
+    },
+    "conflict": {
+      "title": "解決同步衝突",
+      "empty": "沒有待處理的衝突",
+      "localVersion": "本地版本",
+      "remoteVersion": "雲端版本",
+      "mergedVersion": "合併版本",
+      "chooseLocal": "使用本地",
+      "chooseRemote": "使用雲端",
+      "merge": "手動合併",
+      "resolve": "確認解決",
+      "resolveAllLocal": "全部使用本地",
+      "resolveAllRemote": "全部使用雲端",
+      "close": "關閉",
+      "type": {
+        "contentModified": "內容",
+        "titleChanged": "標題",
+        "categoryMoved": "分類",
+        "deletedLocally": "本地已刪除",
+        "deletedRemotely": "雲端已刪除"
+      },
+      "field": {
+        "title": "標題",
+        "category": "分類",
+        "updatedAt": "修改時間"
+      },
+      "resolveSuccess": "衝突已解決",
+      "resolveError": "解決衝突失敗：{{message}}"
     }
   },
   "recycleBin": {

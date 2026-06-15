@@ -9,7 +9,10 @@ use tauri::AppHandle;
 use crate::services::notes::{default_store, AppError};
 use oss::{OssClient, OssConfig};
 use state::SyncStateManager;
-use types::{NoteCloudStatus, SyncResultDto, SyncStatusDto};
+use types::{
+    ConflictResolution, NoteCloudStatus, PendingConflict, SyncConflictDetailDto, SyncResultDto,
+    SyncStatusDto,
+};
 
 pub fn start_sync_scheduler(app: AppHandle) {
     scheduler::start_sync_scheduler(app);
@@ -78,6 +81,175 @@ pub fn get_sync_status() -> Result<SyncStatusDto, AppError> {
     let store = default_store()?;
     let state_manager = SyncStateManager::new(&store.base_dir);
     Ok(state_manager.get_status_dto())
+}
+
+pub fn list_sync_conflicts() -> Result<Vec<PendingConflict>, AppError> {
+    let store = default_store()?;
+    let state_manager = SyncStateManager::new(&store.base_dir);
+    Ok(state_manager.get_pending_conflicts())
+}
+
+pub async fn get_sync_conflict_detail(note_id: String) -> Result<SyncConflictDetailDto, AppError> {
+    let config = default_store()?.load_config()?;
+    let store = default_store()?;
+    let state_manager = SyncStateManager::new(&store.base_dir);
+    let conflict = state_manager
+        .get_pending_conflict(&note_id)
+        .ok_or_else(|| AppError {
+            code: "conflictNotFound".into(),
+            message: format!("Conflict {} not found", note_id),
+            details: Default::default(),
+        })?;
+    let local_note = store.read_note(&note_id).map_err(|e| AppError {
+        code: "notes".into(),
+        message: e.to_string(),
+        details: Default::default(),
+    })?;
+
+    let access_key_secret =
+        scheduler::get_oss_credential_public(&config.oss_access_key_id).unwrap_or_default();
+    let oss_config = OssConfig {
+        endpoint: config.oss_endpoint.clone(),
+        bucket: config.oss_bucket.clone(),
+        access_key_id: config.oss_access_key_id.clone(),
+        access_key_secret,
+    };
+    let client = OssClient::new(oss_config).map_err(|e| AppError {
+        code: "ossClient".into(),
+        message: e.to_string(),
+        details: Default::default(),
+    })?;
+    let device_id = hostname::get()
+        .map(|h| h.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "unknown-device".to_string());
+    let engine = engine::SyncEngine::new(
+        &client,
+        &store,
+        &state_manager,
+        config.sync_strategy.clone(),
+        device_id,
+        config.oss_remote_prefix.clone(),
+    );
+
+    let remote_content = engine
+        .fetch_remote_content(&note_id)
+        .await
+        .unwrap_or_default();
+    Ok(SyncConflictDetailDto {
+        note_id: conflict.note_id,
+        local_title: conflict.local_title,
+        remote_title: conflict.remote_title,
+        local_category: conflict.local_category,
+        remote_category: conflict.remote_category,
+        local_updated_at: conflict.local_updated_at,
+        remote_updated_at: conflict.remote_updated_at,
+        local_content: local_note.content,
+        remote_content,
+        conflict_type: conflict.conflict_type,
+    })
+}
+
+pub async fn resolve_sync_conflict(resolution: ConflictResolution) -> Result<(), AppError> {
+    let config = default_store()?.load_config()?;
+    let access_key_secret =
+        scheduler::get_oss_credential_public(&config.oss_access_key_id).unwrap_or_default();
+    let oss_config = OssConfig {
+        endpoint: config.oss_endpoint.clone(),
+        bucket: config.oss_bucket.clone(),
+        access_key_id: config.oss_access_key_id.clone(),
+        access_key_secret,
+    };
+    let client = OssClient::new(oss_config).map_err(|e| AppError {
+        code: "ossClient".into(),
+        message: e.to_string(),
+        details: Default::default(),
+    })?;
+    let store = default_store()?;
+    let state_manager = SyncStateManager::new(&store.base_dir);
+    let device_id = hostname::get()
+        .map(|h| h.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "unknown-device".to_string());
+    let engine = engine::SyncEngine::new(
+        &client,
+        &store,
+        &state_manager,
+        config.sync_strategy.clone(),
+        device_id,
+        config.oss_remote_prefix.clone(),
+    );
+
+    let remote_manifest = engine.fetch_remote_manifest().await.map_err(|e| AppError {
+        code: "sync".into(),
+        message: e.to_string(),
+        details: Default::default(),
+    })?;
+    engine
+        .resolve_conflict(&resolution, &remote_manifest)
+        .await
+        .map_err(|e| AppError {
+            code: "sync".into(),
+            message: e.to_string(),
+            details: Default::default(),
+        })
+}
+
+pub async fn resolve_all_sync_conflicts(strategy: String) -> Result<(), AppError> {
+    let config = default_store()?.load_config()?;
+    let store = default_store()?;
+    let state_manager = SyncStateManager::new(&store.base_dir);
+    let conflicts = state_manager.get_pending_conflicts();
+    if conflicts.is_empty() {
+        return Ok(());
+    }
+
+    let access_key_secret =
+        scheduler::get_oss_credential_public(&config.oss_access_key_id).unwrap_or_default();
+    let oss_config = OssConfig {
+        endpoint: config.oss_endpoint.clone(),
+        bucket: config.oss_bucket.clone(),
+        access_key_id: config.oss_access_key_id.clone(),
+        access_key_secret,
+    };
+    let client = OssClient::new(oss_config).map_err(|e| AppError {
+        code: "ossClient".into(),
+        message: e.to_string(),
+        details: Default::default(),
+    })?;
+    let device_id = hostname::get()
+        .map(|h| h.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "unknown-device".to_string());
+    let engine = engine::SyncEngine::new(
+        &client,
+        &store,
+        &state_manager,
+        config.sync_strategy.clone(),
+        device_id,
+        config.oss_remote_prefix.clone(),
+    );
+
+    let remote_manifest = engine.fetch_remote_manifest().await.map_err(|e| AppError {
+        code: "sync".into(),
+        message: e.to_string(),
+        details: Default::default(),
+    })?;
+    for conflict in conflicts {
+        let resolution = ConflictResolution {
+            note_id: conflict.note_id,
+            choice: strategy.clone(),
+            merged_title: None,
+            merged_category: None,
+            merged_content: None,
+        };
+        engine
+            .resolve_conflict(&resolution, &remote_manifest)
+            .await
+            .map_err(|e| AppError {
+                code: "sync".into(),
+                message: e.to_string(),
+                details: Default::default(),
+            })?;
+    }
+    Ok(())
 }
 
 pub async fn test_oss_connection(
@@ -161,4 +333,26 @@ pub fn oss_get_credential_command(access_key_id: String) -> Result<String, AppEr
 #[tauri::command]
 pub fn sync_get_cloud_status_command() -> Result<Vec<NoteCloudStatus>, AppError> {
     get_notes_cloud_status()
+}
+
+#[tauri::command]
+pub fn sync_conflicts_list_command() -> Result<Vec<PendingConflict>, AppError> {
+    list_sync_conflicts()
+}
+
+#[tauri::command]
+pub async fn sync_conflict_detail_command(
+    note_id: String,
+) -> Result<SyncConflictDetailDto, AppError> {
+    get_sync_conflict_detail(note_id).await
+}
+
+#[tauri::command]
+pub async fn sync_conflict_resolve_command(resolution: ConflictResolution) -> Result<(), AppError> {
+    resolve_sync_conflict(resolution).await
+}
+
+#[tauri::command]
+pub async fn sync_conflict_resolve_all_command(strategy: String) -> Result<(), AppError> {
+    resolve_all_sync_conflicts(strategy).await
 }

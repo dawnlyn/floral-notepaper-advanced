@@ -77,11 +77,15 @@
     "category": {
       "confirmDelete": "确认删除「{{category}}」？",
       "confirmDeleteAction": "确认删除",
+      "confirmCreate": "确认创建",
+      "createNote": "新建笔记",
+      "createSubcategory": "新建子分类",
       "delete": "删除分类",
       "emptyFolder": "空文件夹",
       "new": "新建分类",
       "placeholder": "输入分类名…",
       "rename": "重命名",
+      "subcategoryPlaceholder": "子分类名，可用 / 嵌套…",
       "uncategorized": "未分类"
     },
     "confirm": {
@@ -163,6 +167,10 @@
       "quickNotepad": "快捷便签",
       "restore": "还原",
       "settings": "设置"
+    },
+    "blankMenu": {
+      "newCategory": "新建分类",
+      "newNote": "新建笔记"
     }
   },
   "noteMenu": {
@@ -454,7 +462,7 @@
     },
     "sync": {
       "title": "同步设置",
-      "onStartup·": "启动时同步",
+      "onStartup": "启动时同步",
       "interval": {
         "label": "同步间隔",
         "off": "关闭",
@@ -492,6 +500,34 @@
       "syncing": "同步中",
       "completed": "已完成",
       "error": "同步出错"
+    },
+    "conflict": {
+      "title": "解决同步冲突",
+      "empty": "没有待处理的冲突",
+      "localVersion": "本地版本",
+      "remoteVersion": "云端版本",
+      "mergedVersion": "合并版本",
+      "chooseLocal": "使用本地",
+      "chooseRemote": "使用云端",
+      "merge": "手动合并",
+      "resolve": "确认解决",
+      "resolveAllLocal": "全部使用本地",
+      "resolveAllRemote": "全部使用云端",
+      "close": "关闭",
+      "type": {
+        "contentModified": "内容",
+        "titleChanged": "标题",
+        "categoryMoved": "分类",
+        "deletedLocally": "本地已删除",
+        "deletedRemotely": "云端已删除"
+      },
+      "field": {
+        "title": "标题",
+        "category": "分类",
+        "updatedAt": "修改时间"
+      },
+      "resolveSuccess": "冲突已解决",
+      "resolveError": "解决冲突失败：{{message}}"
     }
   },
   "recycleBin": {

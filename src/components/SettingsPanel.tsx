@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { showToast } from "./Toast";
+import { showLoadingToast, showToast } from "./Toast";
 import { checkGlobalShortcut, chooseBackgroundImage } from "../features/settings/api";
 import { UpdateSettingsSection } from "../features/update/UpdateSettingsSection";
 import type {
@@ -44,6 +44,8 @@ interface SettingsPanelProps {
   onSave: () => void;
   onCancel: () => void;
   savedConfig: AppConfig | null;
+  pendingConflictCount?: number;
+  onOpenConflictResolution?: () => void;
 }
 
 export function SettingsPanel({
@@ -54,6 +56,8 @@ export function SettingsPanel({
   onSave,
   onCancel,
   savedConfig,
+  pendingConflictCount = 0,
+  onOpenConflictResolution,
 }: SettingsPanelProps) {
   const { t } = useTranslation();
 
@@ -75,6 +79,7 @@ export function SettingsPanel({
   // Sync status state
   const [syncStatus, setSyncStatus] = useState<SyncStatusDto | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const loadingToastRef = useRef<{ close: () => void } | null>(null);
 
   // Load OSS credential from keyring when accessKeyId changes
   useEffect(() => {
@@ -122,19 +127,26 @@ export function SettingsPanel({
 
   const handleSyncNow = useCallback(async () => {
     setSyncing(true);
+    loadingToastRef.current = showLoadingToast(
+      t("settings.sync.syncing", { defaultValue: "正在同步..." }),
+    );
     try {
       // Save credential first if configured
       if (config.ossAccessKeyId && ossSecret) {
         await saveOssCredential(config.ossAccessKeyId, ossSecret);
       }
       const result = await syncNow();
-      showToast(
-        t("settings.sync.syncComplete", {
-          uploaded: result.uploaded,
-          downloaded: result.downloaded,
-          defaultValue: `同步完成：上传 ${result.uploaded} 篇，下载 ${result.downloaded} 篇`,
-        }),
-      );
+      if (result.conflicts.length > 0) {
+        onOpenConflictResolution?.();
+      } else {
+        showToast(
+          t("settings.sync.syncComplete", {
+            uploaded: result.uploaded,
+            downloaded: result.downloaded,
+            defaultValue: `同步完成：上传 ${result.uploaded} 篇，下载 ${result.downloaded} 篇`,
+          }),
+        );
+      }
       const status = await getSyncStatus();
       setSyncStatus(status);
     } catch (error) {
@@ -145,9 +157,18 @@ export function SettingsPanel({
         }),
       );
     } finally {
+      loadingToastRef.current?.close();
+      loadingToastRef.current = null;
       setSyncing(false);
     }
   }, [config.ossAccessKeyId, ossSecret, t]);
+
+  useEffect(() => {
+    return () => {
+      loadingToastRef.current?.close();
+      loadingToastRef.current = null;
+    };
+  }, []);
 
   const setConfigValue = <Key extends keyof AppConfig>(key: Key, value: AppConfig[Key]) => {
     onChange({ ...config, [key]: value });
@@ -729,16 +750,30 @@ export function SettingsPanel({
                     })
                   : t("settings.sync.neverSynced", { defaultValue: "从未同步" })}
               </span>
-              <button
-                type="button"
-                onClick={handleSyncNow}
-                disabled={syncing}
-                className="h-8 px-3 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
-              >
-                {syncing
-                  ? t("settings.sync.syncing", { defaultValue: "正在同步..." })
-                  : t("settings.sync.syncNow", { defaultValue: "立即同步" })}
-              </button>
+              <div className="flex items-center gap-2">
+                {pendingConflictCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={onOpenConflictResolution}
+                    className="h-8 px-3 rounded-lg border border-amber-400/50 text-[11px] text-amber-600 hover:text-amber-700 hover:bg-amber-400/10 transition-colors cursor-pointer"
+                  >
+                    {t("settings.sync.conflicts", {
+                      count: pendingConflictCount,
+                      defaultValue: "{{count}} 个冲突需要处理",
+                    })}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleSyncNow}
+                  disabled={syncing}
+                  className="h-8 px-3 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  {syncing
+                    ? t("settings.sync.syncing", { defaultValue: "正在同步..." })
+                    : t("settings.sync.syncNow", { defaultValue: "立即同步" })}
+                </button>
+              </div>
             </div>
           </section>
         )}

@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use super::oss::OssClient;
 use super::state::SyncStateManager;
 use super::types::{
-    NoteSyncRecord, RemoteNoteEntry, SyncAction, SyncConflictDto, SyncError, SyncManifest,
-    SyncResultDto,
+    ConflictResolution, ConflictType, NoteSyncRecord, PendingConflict, RemoteNoteEntry, SyncAction,
+    SyncConflictDto, SyncError, SyncManifest, SyncResultDto,
 };
 use crate::services::notes::{NoteMetadata, NoteStore};
 
@@ -82,6 +82,7 @@ impl<'a> SyncEngine<'a> {
         let mut downloaded = 0usize;
         let mut _deleted_remote = 0usize;
         let mut conflicts = Vec::new();
+        let mut pending_conflicts = Vec::new();
         let mut errors = Vec::new();
 
         // 1. Fetch remote manifest
@@ -130,17 +131,33 @@ impl<'a> SyncEngine<'a> {
                     note_id,
                     local_updated,
                     remote_updated,
+                    conflict_type,
                 } => {
-                    let title = local_notes
-                        .iter()
-                        .find(|n| n.id == note_id)
-                        .map(|n| n.title.clone())
-                        .unwrap_or_default();
+                    let local_note = local_notes.iter().find(|n| n.id == note_id);
+                    let title = local_note.map(|n| n.title.clone()).unwrap_or_default();
+                    let local_category = local_note.map(|n| n.category.clone()).unwrap_or_default();
+                    let local_title = local_note.map(|n| n.title.clone()).unwrap_or_default();
+                    let remote = remote_manifest.notes.iter().find(|n| n.id == note_id);
+                    let remote_category = remote.map(|n| n.category.clone()).unwrap_or_default();
+                    let remote_title = remote.map(|n| n.title.clone()).unwrap_or_default();
                     conflicts.push(SyncConflictDto {
-                        note_id,
-                        note_title: title,
+                        note_id: note_id.clone(),
+                        note_title: title.clone(),
                         local_updated_at: local_updated.to_rfc3339(),
                         remote_updated_at: remote_updated.to_rfc3339(),
+                        conflict_type: conflict_type.clone(),
+                    });
+                    pending_conflicts.push(PendingConflict {
+                        note_id: note_id.clone(),
+                        title,
+                        local_updated_at: local_updated.to_rfc3339(),
+                        remote_updated_at: remote_updated.to_rfc3339(),
+                        local_category,
+                        remote_category,
+                        local_title,
+                        remote_title,
+                        conflict_type,
+                        resolved: false,
                     });
                 }
                 SyncAction::DeleteLocal { note_id } => {
@@ -171,6 +188,8 @@ impl<'a> SyncEngine<'a> {
             .await?;
 
         // 6. Update state
+        self.state_manager
+            .add_or_update_pending_conflicts(pending_conflicts);
         self.state_manager.update_last_synced();
         self.state_manager.update_active_strategy(&self.strategy);
 
@@ -186,7 +205,7 @@ impl<'a> SyncEngine<'a> {
         })
     }
 
-    async fn fetch_remote_manifest(&self) -> Result<SyncManifest, SyncError> {
+    pub async fn fetch_remote_manifest(&self) -> Result<SyncManifest, SyncError> {
         let key = self.manifest_key();
         match self.client.get_object(&key).await {
             Ok(data) => {
@@ -397,10 +416,18 @@ impl<'a> SyncEngine<'a> {
                             });
                         }
                         "manual" => {
+                            let conflict_type = ConflictType {
+                                content_modified: !content_match,
+                                title_changed: !title_match,
+                                category_moved: !category_match,
+                                deleted_locally: false,
+                                deleted_remotely: false,
+                            };
                             actions.push(SyncAction::Conflict {
                                 note_id: id.clone(),
                                 local_updated: local.updated_at,
                                 remote_updated: remote.updated_at,
+                                conflict_type,
                             });
                         }
                         _ => {
@@ -520,6 +547,64 @@ impl<'a> SyncEngine<'a> {
             },
         );
 
+        Ok(())
+    }
+
+    pub async fn fetch_remote_content(&self, note_id: &str) -> Result<String, SyncError> {
+        let bytes = self
+            .client
+            .get_object(&self.note_content_key(note_id))
+            .await?;
+        String::from_utf8(bytes).map_err(|e| SyncError::new("encoding", e.to_string()))
+    }
+
+    pub async fn resolve_conflict(
+        &self,
+        resolution: &ConflictResolution,
+        remote_manifest: &SyncManifest,
+    ) -> Result<(), SyncError> {
+        let note_id = resolution.note_id.as_str();
+        match resolution.choice.as_str() {
+            "local" => {
+                self.upload_note(note_id).await?;
+            }
+            "remote" => {
+                let remote_deleted = remote_manifest
+                    .notes
+                    .iter()
+                    .any(|n| n.id == note_id && n.deleted);
+                if remote_deleted {
+                    self.store
+                        .trash_note(note_id)
+                        .map_err(|e| SyncError::new("notes", e.to_string()))?;
+                } else {
+                    self.download_note(note_id, remote_manifest).await?;
+                }
+            }
+            "merge" => {
+                let content = resolution.merged_content.clone().unwrap_or_default();
+                let title = resolution.merged_title.clone().unwrap_or_default();
+                let category = resolution.merged_category.clone().unwrap_or_default();
+                self.store
+                    .update_note(
+                        note_id,
+                        crate::services::notes::SaveNoteRequest {
+                            title,
+                            content,
+                            category,
+                        },
+                    )
+                    .map_err(|e| SyncError::new("notes", e.to_string()))?;
+                self.upload_note(note_id).await?;
+            }
+            _ => {
+                return Err(SyncError::new(
+                    "sync",
+                    format!("Invalid resolution choice: {}", resolution.choice),
+                ));
+            }
+        }
+        self.state_manager.mark_conflict_resolved(note_id);
         Ok(())
     }
 }

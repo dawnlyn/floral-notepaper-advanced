@@ -2,7 +2,9 @@ use crate::json_io::{read_json, write_json_atomic};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use super::types::{DeletedNoteRecord, NoteCloudStatus, NoteSyncRecord, SyncState, SyncStatusDto};
+use super::types::{
+    DeletedNoteRecord, NoteCloudStatus, NoteSyncRecord, PendingConflict, SyncState, SyncStatusDto,
+};
 
 pub struct SyncStateManager {
     state_path: PathBuf,
@@ -126,5 +128,66 @@ impl SyncStateManager {
             last_result: None,
             next_sync_at: None,
         }
+    }
+
+    pub fn set_pending_conflicts(&self, conflicts: Vec<PendingConflict>) {
+        let mut state = self.state.lock().unwrap();
+        state.pending_conflicts = conflicts;
+        let _ = write_json_atomic(&self.state_path, &*state);
+    }
+
+    pub fn add_or_update_pending_conflicts(&self, new_conflicts: Vec<PendingConflict>) {
+        let mut state = self.state.lock().unwrap();
+        for conflict in new_conflicts {
+            if let Some(existing) = state
+                .pending_conflicts
+                .iter_mut()
+                .find(|c| c.note_id == conflict.note_id)
+            {
+                if !existing.resolved {
+                    *existing = conflict;
+                }
+            } else {
+                state.pending_conflicts.push(conflict);
+            }
+        }
+        let _ = write_json_atomic(&self.state_path, &*state);
+    }
+
+    pub fn get_pending_conflicts(&self) -> Vec<PendingConflict> {
+        let state = self.state.lock().unwrap();
+        state
+            .pending_conflicts
+            .iter()
+            .filter(|c| !c.resolved)
+            .cloned()
+            .collect()
+    }
+
+    pub fn get_pending_conflict(&self, note_id: &str) -> Option<PendingConflict> {
+        let state = self.state.lock().unwrap();
+        state
+            .pending_conflicts
+            .iter()
+            .find(|c| c.note_id == note_id && !c.resolved)
+            .cloned()
+    }
+
+    pub fn mark_conflict_resolved(&self, note_id: &str) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(conflict) = state
+            .pending_conflicts
+            .iter_mut()
+            .find(|c| c.note_id == note_id)
+        {
+            conflict.resolved = true;
+        }
+        let _ = write_json_atomic(&self.state_path, &*state);
+    }
+
+    pub fn clear_resolved_conflicts(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.pending_conflicts.retain(|c| !c.resolved);
+        let _ = write_json_atomic(&self.state_path, &*state);
     }
 }

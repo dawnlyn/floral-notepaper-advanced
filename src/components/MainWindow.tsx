@@ -30,6 +30,8 @@ import type {
   UpdateState,
 } from "../features/update/types";
 import { BackgroundLayer } from "./BackgroundLayer";
+import { ConflictResolutionModal } from "./ConflictResolutionModal";
+import { DebugButton } from "./DebugButton";
 import { SettingsPanel } from "./SettingsPanel";
 import { SlidingButtonGroup } from "./SlidingButtonGroup";
 import {
@@ -77,7 +79,7 @@ import {
   type NoteContextMenuAction,
 } from "../features/notes/noteContextMenu";
 import { openNotepadWindow, takeStartupFile, toggleTileWindow } from "../features/windows/api";
-import { getNotesCloudStatus } from "../features/sync/api";
+import { getNotesCloudStatus, listSyncConflicts } from "../features/sync/api";
 import {
   closeCurrentWindow,
   minimizeCurrentWindow,
@@ -540,6 +542,10 @@ interface CategoryNodeProps {
   setCategoryMenu: (state: CategoryMenuState | null) => void;
   setCategoryMenuClosing: (v: boolean) => void;
   setCategoryMenuConfirmDelete: (v: boolean) => void;
+  setCategoryMenuMode: (mode: "main" | "createSub") => void;
+  setCategoryMenuSubcategory: (v: string) => void;
+  setNoteMenuClosing: (v: boolean) => void;
+  setBlankMenuClosing: (v: boolean) => void;
   cloudStatusMap: Record<string, boolean>;
   t: TFunction;
 }
@@ -569,6 +575,10 @@ function CategoryNode({
   setCategoryMenu,
   setCategoryMenuClosing,
   setCategoryMenuConfirmDelete,
+  setCategoryMenuMode,
+  setCategoryMenuSubcategory,
+  setNoteMenuClosing,
+  setBlankMenuClosing,
   cloudStatusMap,
   t,
 }: CategoryNodeProps) {
@@ -604,6 +614,10 @@ function CategoryNode({
           });
           setCategoryMenuClosing(false);
           setCategoryMenuConfirmDelete(false);
+          setCategoryMenuMode("main");
+          setCategoryMenuSubcategory("");
+          setNoteMenuClosing(true);
+          setBlankMenuClosing(true);
         }}
         onDragStart={(e) => {
           e.dataTransfer.setData(CATEGORY_DRAG_MIME, node.category);
@@ -839,6 +853,10 @@ function CategoryNode({
                     setCategoryMenu={setCategoryMenu}
                     setCategoryMenuClosing={setCategoryMenuClosing}
                     setCategoryMenuConfirmDelete={setCategoryMenuConfirmDelete}
+                    setCategoryMenuMode={setCategoryMenuMode}
+                    setCategoryMenuSubcategory={setCategoryMenuSubcategory}
+                    setNoteMenuClosing={setNoteMenuClosing}
+                    setBlankMenuClosing={setBlankMenuClosing}
                     cloudStatusMap={cloudStatusMap}
                     t={t}
                   />
@@ -930,6 +948,12 @@ export function MainWindow({
   const [categoryMenu, setCategoryMenu] = useState<CategoryMenuState | null>(null);
   const [categoryMenuClosing, setCategoryMenuClosing] = useState(false);
   const [categoryMenuConfirmDelete, setCategoryMenuConfirmDelete] = useState(false);
+  const [categoryMenuMode, setCategoryMenuMode] = useState<"main" | "createSub">("main");
+  const [categoryMenuSubcategory, setCategoryMenuSubcategory] = useState("");
+  const [blankMenu, setBlankMenu] = useState<{ x: number; y: number } | null>(null);
+  const [blankMenuClosing, setBlankMenuClosing] = useState(false);
+  const [conflictModalOpen, setConflictModalOpen] = useState(false);
+  const [pendingConflictCount, setPendingConflictCount] = useState(0);
   const contentRef = useRef<HTMLTextAreaElement>(null);
   const windowLabelRef = useRef("main");
   const externalFileMtimeRef = useRef<number>(0);
@@ -1442,13 +1466,28 @@ export function MainWindow({
       .catch(() => {});
   }, []);
 
+  const refreshPendingConflicts = useCallback(() => {
+    listSyncConflicts()
+      .then((conflicts) => setPendingConflictCount(conflicts.filter((c) => !c.resolved).length))
+      .catch(() => {});
+  }, []);
+
+  const handleOpenConflictResolution = useCallback(() => {
+    refreshPendingConflicts();
+    setConflictModalOpen(true);
+  }, [refreshPendingConflicts]);
+
   useEffect(() => {
     refreshCloudStatus();
-    const unlisten = listen("sync-completed", () => refreshCloudStatus());
+    refreshPendingConflicts();
+    const unlisten = listen("sync-completed", () => {
+      refreshCloudStatus();
+      refreshPendingConflicts();
+    });
     return () => {
       void unlisten.then((fn) => fn());
     };
-  }, [refreshCloudStatus]);
+  }, [refreshCloudStatus, refreshPendingConflicts]);
 
   useEffect(() => {
     const unlisten = listen<string>("open-external-file", (event) => {
@@ -1529,6 +1568,7 @@ export function MainWindow({
     function closeMenus() {
       setNoteMenuClosing(true);
       setCategoryMenuClosing(true);
+      setBlankMenuClosing(true);
     }
 
     function handleKeyDown(event: KeyboardEvent) {
@@ -1559,9 +1599,20 @@ export function MainWindow({
       setCategoryMenu(null);
       setCategoryMenuClosing(false);
       setCategoryMenuConfirmDelete(false);
+      setCategoryMenuMode("main");
+      setCategoryMenuSubcategory("");
     }, 150);
     return () => window.clearTimeout(timer);
   }, [categoryMenuClosing, categoryMenu]);
+
+  useEffect(() => {
+    if (!blankMenuClosing || !blankMenu) return;
+    const timer = window.setTimeout(() => {
+      setBlankMenu(null);
+      setBlankMenuClosing(false);
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [blankMenuClosing, blankMenu]);
 
   const saveCurrentNote = useCallback(async () => {
     if (!selectedId) return null;
@@ -1685,6 +1736,19 @@ export function MainWindow({
     }
     try {
       const note = await createNote({ title: "", content: "", category: activeCategory });
+      replaceNoteMetadata(note);
+      applyNote(note);
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  };
+
+  const handleCreateNoteInCategory = async (category: string) => {
+    if (saveState === "dirty") {
+      await saveCurrentNote();
+    }
+    try {
+      const note = await createNote({ title: "", content: "", category });
       replaceNoteMetadata(note);
       applyNote(note);
     } catch (error) {
@@ -2219,6 +2283,26 @@ export function MainWindow({
     }
   };
 
+  const handleCreateSubcategory = async () => {
+    const name = categoryMenuSubcategory.trim();
+    const parent = categoryMenu?.category;
+    if (!name || !parent) return;
+    const path = `${parent}/${name}`;
+    setCategoryMenuSubcategory("");
+    setCategoryMenuClosing(true);
+    try {
+      await createCategory(path);
+      await refreshNotes();
+      setCollapsedCategories((previous) => {
+        const next = new Set(previous);
+        next.delete(parent);
+        return next;
+      });
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  };
+
   const handleRenameCategory = async (oldName: string) => {
     const newName = renameCategoryValue.trim();
     if (!newName || newName === oldName) {
@@ -2412,6 +2496,11 @@ export function MainWindow({
     }
   };
 
+  const handleDebugButtonClick = () => {
+    // Add temporary debug/test logic here.
+    console.log("[Debug] button clicked");
+  };
+
   const [isMaximized, setIsMaximized] = useState(false);
 
   useEffect(() => {
@@ -2556,6 +2645,7 @@ export function MainWindow({
             </span>
           </div>
           <div className="flex items-center">
+            <DebugButton onClick={handleDebugButtonClick} />
             <button
               onClick={() => void handleOpenNotepad()}
               className="w-10 h-11 flex items-center justify-center text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer"
@@ -2887,6 +2977,17 @@ export function MainWindow({
                   setDragOverCategory(null);
                   void handleMoveCategory(sourceCategory, "");
                 }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  const menuWidth = 140;
+                  const menuHeight = 80;
+                  const x = Math.min(e.clientX, window.innerWidth - menuWidth - 4);
+                  const y = Math.min(e.clientY, window.innerHeight - menuHeight - 4);
+                  setBlankMenu({ x: Math.max(4, x), y: Math.max(4, y) });
+                  setBlankMenuClosing(false);
+                  setNoteMenuClosing(true);
+                  setCategoryMenuClosing(true);
+                }}
               >
                 <div className="space-y-0.5">
                   {externalFiles.length > 0 && (
@@ -3092,6 +3193,10 @@ export function MainWindow({
                         setCategoryMenu={setCategoryMenu}
                         setCategoryMenuClosing={setCategoryMenuClosing}
                         setCategoryMenuConfirmDelete={setCategoryMenuConfirmDelete}
+                        setCategoryMenuMode={setCategoryMenuMode}
+                        setCategoryMenuSubcategory={setCategoryMenuSubcategory}
+                        setNoteMenuClosing={setNoteMenuClosing}
+                        setBlankMenuClosing={setBlankMenuClosing}
                         cloudStatusMap={cloudStatusMap}
                         t={t}
                       />
@@ -3690,6 +3795,8 @@ export function MainWindow({
                   onSave={() => void handleSaveSettings()}
                   onCancel={handleCancelSettings}
                   savedConfig={settingsConfig}
+                  pendingConflictCount={pendingConflictCount}
+                  onOpenConflictResolution={handleOpenConflictResolution}
                 />
               ) : null}
             </div>
@@ -3760,7 +3867,7 @@ export function MainWindow({
 
       {categoryMenu && (
         <div
-          className={`fixed z-[9999] min-w-[140px] py-1.5 bg-cloud/95 backdrop-blur-sm border border-paper-deep/50 rounded-lg overflow-hidden select-none ${categoryMenuClosing ? "animate-menu-exit" : "animate-menu-enter"}`}
+          className={`fixed z-[9999] min-w-[160px] py-1.5 bg-cloud/95 backdrop-blur-sm border border-paper-deep/50 rounded-lg overflow-hidden select-none ${categoryMenuClosing ? "animate-menu-exit" : "animate-menu-enter"}`}
           style={{ left: categoryMenu.x, top: categoryMenu.y }}
           onMouseDown={(event) => event.stopPropagation()}
         >
@@ -3783,7 +3890,41 @@ export function MainWindow({
               </button>
               <button
                 onClick={() => setCategoryMenuConfirmDelete(false)}
-                className="w-full text-left px-3 py-1.5 text-[12px] font-body text-ink-soft hover:bg-bamboo-mist/60 hover:text-bamboo transition-colors cursor-pointer"
+                className="w-full text-left px-3 py-1.5 text-[12px] font-body text-ink-soft hover:bg-bamboo-mist/60 hover:text-bamboo transition-colors cursor-pointer border-t border-paper-deep/20"
+              >
+                {t("common.cancel", { defaultValue: "取消" })}
+              </button>
+            </div>
+          ) : categoryMenuMode === "createSub" ? (
+            <div className="animate-menu-slide-left">
+              <div className="px-3 py-1.5 text-[11px] font-body text-ink-faint border-b border-paper-deep/20">
+                {t("main.category.createSubcategory", { defaultValue: "新建子分类" })}
+              </div>
+              <div className="px-3 py-1.5">
+                <input
+                  autoFocus
+                  type="text"
+                  value={categoryMenuSubcategory}
+                  onChange={(e) => setCategoryMenuSubcategory(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void handleCreateSubcategory();
+                    if (e.key === "Escape") setCategoryMenuMode("main");
+                  }}
+                  placeholder={t("main.category.subcategoryPlaceholder", {
+                    defaultValue: "子分类名，可用 / 嵌套…",
+                  })}
+                  className="w-full px-2 h-7 rounded-lg text-[12px] font-body text-ink bg-paper-warm/80 border border-paper-deep/40 focus:border-bamboo/30 placeholder:text-ink-ghost/60"
+                />
+              </div>
+              <button
+                onClick={() => void handleCreateSubcategory()}
+                className="w-full text-left px-3 py-1.5 text-[12px] font-body text-ink-soft hover:bg-bamboo-mist/60 hover:text-bamboo transition-colors cursor-pointer border-t border-paper-deep/20"
+              >
+                {t("main.category.confirmCreate", { defaultValue: "确认创建" })}
+              </button>
+              <button
+                onClick={() => setCategoryMenuMode("main")}
+                className="w-full text-left px-3 py-1.5 text-[12px] font-body text-ink-soft hover:bg-bamboo-mist/60 hover:text-bamboo transition-colors cursor-pointer border-t border-paper-deep/20"
               >
                 {t("common.cancel", { defaultValue: "取消" })}
               </button>
@@ -3793,10 +3934,25 @@ export function MainWindow({
               <button
                 onClick={() => {
                   setCategoryMenuClosing(true);
+                  void handleCreateNoteInCategory(categoryMenu.category);
+                }}
+                className="w-full text-left px-3 py-1.5 text-[12px] font-body text-ink-soft hover:bg-bamboo-mist/60 hover:text-bamboo transition-colors cursor-pointer"
+              >
+                {t("main.category.createNote", { defaultValue: "新建笔记" })}
+              </button>
+              <button
+                onClick={() => setCategoryMenuMode("createSub")}
+                className="w-full text-left px-3 py-1.5 text-[12px] font-body text-ink-soft hover:bg-bamboo-mist/60 hover:text-bamboo transition-colors cursor-pointer border-t border-paper-deep/20"
+              >
+                {t("main.category.createSubcategory", { defaultValue: "新建子分类" })}
+              </button>
+              <button
+                onClick={() => {
+                  setCategoryMenuClosing(true);
                   setRenamingCategory(categoryMenu.category);
                   setRenameCategoryValue(categoryMenu.category);
                 }}
-                className="w-full text-left px-3 py-1.5 text-[12px] font-body text-ink-soft hover:bg-bamboo-mist/60 hover:text-bamboo transition-colors cursor-pointer"
+                className="w-full text-left px-3 py-1.5 text-[12px] font-body text-ink-soft hover:bg-bamboo-mist/60 hover:text-bamboo transition-colors cursor-pointer border-t border-paper-deep/20"
               >
                 {t("main.category.rename", { defaultValue: "重命名" })}
               </button>
@@ -3808,6 +3964,41 @@ export function MainWindow({
               </button>
             </div>
           )}
+        </div>
+      )}
+
+      <ConflictResolutionModal
+        open={conflictModalOpen}
+        onClose={() => setConflictModalOpen(false)}
+        onResolved={refreshPendingConflicts}
+      />
+
+      {blankMenu && (
+        <div
+          className={`fixed z-[9999] min-w-[140px] py-1.5 bg-cloud/95 backdrop-blur-sm border border-paper-deep/50 rounded-lg overflow-hidden select-none ${blankMenuClosing ? "animate-menu-exit" : "animate-menu-enter"}`}
+          style={{ left: blankMenu.x, top: blankMenu.y }}
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <div className="animate-menu-slide-right">
+            <button
+              onClick={() => {
+                setBlankMenuClosing(true);
+                void handleCreateNoteInCategory(activeCategory);
+              }}
+              className="w-full text-left px-3 py-1.5 text-[12px] font-body text-ink-soft hover:bg-bamboo-mist/60 hover:text-bamboo transition-colors cursor-pointer"
+            >
+              {t("main.blankMenu.newNote", { defaultValue: "新建笔记" })}
+            </button>
+            <button
+              onClick={() => {
+                setBlankMenuClosing(true);
+                setShowCategoryInput(true);
+              }}
+              className="w-full text-left px-3 py-1.5 text-[12px] font-body text-ink-soft hover:bg-bamboo-mist/60 hover:text-bamboo transition-colors cursor-pointer border-t border-paper-deep/20"
+            >
+              {t("main.blankMenu.newCategory", { defaultValue: "新建分类" })}
+            </button>
+          </div>
         </div>
       )}
     </div>
