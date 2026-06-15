@@ -1,6 +1,6 @@
 {
   "productName": "floral-notepaper",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "identifier": "com.floral-notepaper.app",
   "bundle": {
     "linux": {
