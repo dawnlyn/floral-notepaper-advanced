@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
@@ -330,6 +330,58 @@ function readDragSource(dataTransfer: DataTransfer): DragSource | null {
   return null;
 }
 
+interface DropGapProps {
+  accept: "note" | "category";
+  disabled?: boolean;
+  onDrop: (source: DragSource) => void;
+}
+
+function DropGap({ accept, disabled, onDrop }: DropGapProps) {
+  const [active, setActive] = useState(false);
+  const [forbidden, setForbidden] = useState(false);
+  const mime = accept === "note" ? NOTE_DRAG_MIME : CATEGORY_DRAG_MIME;
+  return (
+    <div
+      className="relative h-1.5 w-full"
+      onDragOver={(e) => {
+        if (!hasDragType(e.dataTransfer, mime)) return;
+        if (disabled) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = "none";
+          setForbidden(true);
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = "move";
+        setActive(true);
+      }}
+      onDragLeave={() => {
+        setActive(false);
+        setForbidden(false);
+      }}
+      onDrop={(e) => {
+        if (!hasDragType(e.dataTransfer, mime) || disabled) return;
+        const source = readDragSource(e.dataTransfer);
+        setActive(false);
+        setForbidden(false);
+        if (!source) return;
+        e.preventDefault();
+        e.stopPropagation();
+        onDrop(source);
+      }}
+    >
+      {active && (
+        <div className="absolute top-1/2 left-2 right-2 -translate-y-1/2 h-[2px] bg-bamboo rounded-full z-10" />
+      )}
+      {forbidden && (
+        <div className="absolute top-1/2 left-2 right-2 -translate-y-1/2 h-[2px] bg-red-400 rounded-full z-10" />
+      )}
+    </div>
+  );
+}
+
 function dropZoneByRatio(
   event: React.DragEvent<HTMLElement>,
   element: HTMLElement,
@@ -369,7 +421,6 @@ interface NoteItemProps {
   setDragOverCategory: (cat: string | null) => void;
   onSelect: (id: string) => void;
   onOpenMenu: (event: MouseEvent<HTMLElement>, id: string) => void;
-  onDropOnNote: (source: DragSource, targetNoteId: string, position: "before" | "after") => void;
   cloudStatusMap: Record<string, boolean>;
   t: TFunction;
 }
@@ -383,67 +434,30 @@ function NoteItem({
   setDragOverCategory,
   onSelect,
   onOpenMenu,
-  onDropOnNote,
   cloudStatusMap,
   t,
 }: NoteItemProps) {
   const isSelected = note.id === selectedId;
   const isHovered = note.id === hoveredId;
-  const [dragOverPosition, setDragOverPosition] = useState<"before" | "after" | null>(null);
-  const itemRef = useRef<HTMLDivElement>(null);
   return (
     <div
-      ref={itemRef}
       key={note.id}
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData(NOTE_DRAG_MIME, note.id);
         e.dataTransfer.effectAllowed = "move";
       }}
-      onDragEnd={() => {
-        setDragOverCategory(null);
-        setDragOverPosition(null);
-      }}
+      onDragEnd={() => setDragOverCategory(null)}
       onDragOver={(e) => {
-        const hasNote = hasDragType(e.dataTransfer, NOTE_DRAG_MIME);
-        const hasCategory = hasDragType(e.dataTransfer, CATEGORY_DRAG_MIME);
-        if (!hasNote && !hasCategory) return;
-        if (!itemRef.current) return;
-        e.preventDefault();
-        e.stopPropagation();
-        e.dataTransfer.dropEffect = "move";
-        const zone = dropZoneByRatio(e, itemRef.current, 0.5);
-        if (zone !== "inside") setDragOverPosition(zone);
+        if (
+          hasDragType(e.dataTransfer, NOTE_DRAG_MIME) ||
+          hasDragType(e.dataTransfer, CATEGORY_DRAG_MIME)
+        ) {
+          e.stopPropagation();
+        }
       }}
-      onDragLeave={() => setDragOverPosition(null)}
       onDrop={(e) => {
-        const source = readDragSource(e.dataTransfer);
-        if (!source || !itemRef.current) {
-          setDragOverPosition(null);
-          return;
-        }
-        if (source.type === "note" && source.id === note.id) {
-          setDragOverPosition(null);
-          return;
-        }
-        if (source.type === "category" && isDescendantCategory(source.category, note.category)) {
-          setDragOverPosition(null);
-          showToast(
-            t("errors.cannotMoveCategoryIntoDescendant", {
-              defaultValue: "不能将分类放入其子分类中",
-            }),
-          );
-          return;
-        }
-        const zone = dropZoneByRatio(e, itemRef.current, 0.5);
-        if (zone === "inside") {
-          setDragOverPosition(null);
-          return;
-        }
-        e.preventDefault();
         e.stopPropagation();
-        setDragOverPosition(null);
-        onDropOnNote(source, note.id, zone);
       }}
       onClick={() => onSelect(note.id)}
       onContextMenu={(event) => onOpenMenu(event, note.id)}
@@ -454,12 +468,6 @@ function NoteItem({
       } ${isSelected ? "bg-bamboo-mist/70" : isHovered ? "bg-paper-warm/70" : "bg-transparent"}`}
       style={isRoot ? undefined : { width: "calc(100% - 8px)" }}
     >
-      {dragOverPosition === "before" && (
-        <div className="absolute top-0 left-2 right-2 h-[2px] bg-bamboo rounded-full z-10" />
-      )}
-      {dragOverPosition === "after" && (
-        <div className="absolute bottom-0 left-2 right-2 h-[2px] bg-bamboo rounded-full z-10" />
-      )}
       <div
         className={`absolute left-0 top-1/2 -translate-y-1/2 w-[3px] rounded-r-full bg-bamboo/60 transition-all duration-[600ms] ${
           isSelected ? "h-5 opacity-100" : "h-0 opacity-0"
@@ -522,8 +530,9 @@ interface CategoryNodeProps {
   setDragOverCategory: (cat: string | null) => void;
   draggingCategory: string | null;
   setDraggingCategory: (cat: string | null) => void;
-  onDropOnNote: (source: DragSource, targetNoteId: string, position: "before" | "after") => void;
   onDropOnCategory: (source: DragSource, targetCategory: string, zone: DropZone) => void;
+  onDropNoteInGap: (category: string, noteId: string, beforeNoteId?: string) => void;
+  onDropCategoryInGap: (parentCategory: string, category: string, beforeCategory?: string) => void;
   handleSelectNote: (id: string) => void;
   handleOpenNoteMenu: (event: MouseEvent<HTMLElement>, id: string) => void;
   setRenamingCategory: (cat: string | null) => void;
@@ -550,8 +559,9 @@ function CategoryNode({
   setDragOverCategory,
   draggingCategory,
   setDraggingCategory,
-  onDropOnNote,
   onDropOnCategory,
+  onDropNoteInGap,
+  onDropCategoryInGap,
   handleSelectNote,
   handleOpenNoteMenu,
   setRenamingCategory,
@@ -570,7 +580,7 @@ function CategoryNode({
     draggingCategory && isDescendantCategory(draggingCategory, node.category),
   );
   return (
-    <div key={node.category} className="px-2 mb-0.5" style={{ paddingLeft: `${level * 12}px` }}>
+    <div key={node.category} className="px-2" style={{ paddingLeft: `${level * 12}px` }}>
       <div
         ref={headerRef}
         className={`relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg group/cat cursor-pointer select-none transition-all duration-200 ${
@@ -626,7 +636,7 @@ function CategoryNode({
           const zone = isCollapsed
             ? dropZoneByRatio(e, headerRef.current, 1 / 3)
             : dropZoneByPixels(e, headerRef.current, 30);
-          setHeaderDropZone(zone);
+          setHeaderDropZone(zone === "inside" ? "inside" : null);
         }}
         onDragLeave={(e) => {
           if (!e.currentTarget.parentElement?.contains(e.relatedTarget as Node)) {
@@ -659,20 +669,15 @@ function CategoryNode({
           const zone = isCollapsed
             ? dropZoneByRatio(e, headerRef.current, 1 / 3)
             : dropZoneByPixels(e, headerRef.current, 30);
-          e.preventDefault();
-          e.stopPropagation();
           setDragOverCategory(null);
           setHeaderDropZone(null);
           setIsForbidden(false);
-          void onDropOnCategory(source, node.category, zone);
+          if (zone !== "inside") return;
+          e.preventDefault();
+          e.stopPropagation();
+          void onDropOnCategory(source, node.category, "inside");
         }}
       >
-        {headerDropZone === "before" && (
-          <div className="absolute -top-[1px] left-0 right-0 h-[2px] bg-bamboo rounded-full z-10" />
-        )}
-        {headerDropZone === "after" && (
-          <div className="absolute -bottom-[1px] left-0 right-0 h-[2px] bg-bamboo rounded-full z-10" />
-        )}
         {headerDropZone === "inside" && !isForbidden && (
           <div className="absolute inset-0 rounded-lg border-2 border-dashed border-bamboo/40 pointer-events-none z-10" />
         )}
@@ -727,7 +732,10 @@ function CategoryNode({
         </span>
       </div>
 
-      <div className={`category-body ${isCollapsed ? "" : "expanded"}`}>
+      <div
+        className={`category-body ${isCollapsed ? "" : "expanded"}`}
+        style={{ display: isCollapsed ? "none" : "block" }}
+      >
         <div
           className="category-body-inner bg-bamboo/[0.03] border border-t-0 border-bamboo/10 rounded-b-lg pb-1 pt-1"
           onDragOver={(e) => {
@@ -760,51 +768,92 @@ function CategoryNode({
           ) : (
             <>
               {node.notes.map((note) => (
-                <NoteItem
-                  key={note.id}
-                  note={note}
-                  isRoot={false}
-                  selectedId={selectedId}
-                  hoveredId={hoveredId}
-                  setHoveredId={setHoveredId}
-                  setDragOverCategory={setDragOverCategory}
-                  onSelect={handleSelectNote}
-                  onOpenMenu={handleOpenNoteMenu}
-                  onDropOnNote={onDropOnNote}
-                  cloudStatusMap={cloudStatusMap}
-                  t={t}
-                />
+                <Fragment key={`gap-note-${note.id}`}>
+                  <DropGap
+                    accept="note"
+                    onDrop={(source) => {
+                      if (source.type === "note") {
+                        onDropNoteInGap(node.category, source.id, note.id);
+                      }
+                    }}
+                  />
+                  <NoteItem
+                    note={note}
+                    isRoot={false}
+                    selectedId={selectedId}
+                    hoveredId={hoveredId}
+                    setHoveredId={setHoveredId}
+                    setDragOverCategory={setDragOverCategory}
+                    onSelect={handleSelectNote}
+                    onOpenMenu={handleOpenNoteMenu}
+                    cloudStatusMap={cloudStatusMap}
+                    t={t}
+                  />
+                </Fragment>
               ))}
+              {node.notes.length > 0 && (
+                <DropGap
+                  accept="note"
+                  onDrop={(source) => {
+                    if (source.type === "note") {
+                      onDropNoteInGap(node.category, source.id);
+                    }
+                  }}
+                />
+              )}
               {node.children.map((child) => (
-                <CategoryNode
-                  key={child.category}
-                  node={child}
-                  level={level + 1}
-                  selectedId={selectedId}
-                  hoveredId={hoveredId}
-                  setHoveredId={setHoveredId}
-                  renamingCategory={renamingCategory}
-                  renameCategoryValue={renameCategoryValue}
-                  setRenameCategoryValue={setRenameCategoryValue}
-                  collapsedCategories={collapsedCategories}
-                  toggleCategoryCollapse={toggleCategoryCollapse}
-                  dragOverCategory={dragOverCategory}
-                  setDragOverCategory={setDragOverCategory}
-                  draggingCategory={draggingCategory}
-                  setDraggingCategory={setDraggingCategory}
-                  onDropOnNote={onDropOnNote}
-                  onDropOnCategory={onDropOnCategory}
-                  handleSelectNote={handleSelectNote}
-                  handleOpenNoteMenu={handleOpenNoteMenu}
-                  setRenamingCategory={setRenamingCategory}
-                  handleRenameCategory={handleRenameCategory}
-                  setCategoryMenu={setCategoryMenu}
-                  setCategoryMenuClosing={setCategoryMenuClosing}
-                  setCategoryMenuConfirmDelete={setCategoryMenuConfirmDelete}
-                  cloudStatusMap={cloudStatusMap}
-                  t={t}
-                />
+                <Fragment key={`gap-cat-${child.category}`}>
+                  <DropGap
+                    accept="category"
+                    disabled={Boolean(
+                      draggingCategory && isDescendantCategory(draggingCategory, child.category),
+                    )}
+                    onDrop={(source) => {
+                      if (source.type === "category") {
+                        onDropCategoryInGap(node.category, source.category, child.category);
+                      }
+                    }}
+                  />
+                  <CategoryNode
+                    node={child}
+                    level={level + 1}
+                    selectedId={selectedId}
+                    hoveredId={hoveredId}
+                    setHoveredId={setHoveredId}
+                    renamingCategory={renamingCategory}
+                    renameCategoryValue={renameCategoryValue}
+                    setRenameCategoryValue={setRenameCategoryValue}
+                    collapsedCategories={collapsedCategories}
+                    toggleCategoryCollapse={toggleCategoryCollapse}
+                    dragOverCategory={dragOverCategory}
+                    setDragOverCategory={setDragOverCategory}
+                    draggingCategory={draggingCategory}
+                    setDraggingCategory={setDraggingCategory}
+                    onDropOnCategory={onDropOnCategory}
+                    onDropNoteInGap={onDropNoteInGap}
+                    onDropCategoryInGap={onDropCategoryInGap}
+                    handleSelectNote={handleSelectNote}
+                    handleOpenNoteMenu={handleOpenNoteMenu}
+                    setRenamingCategory={setRenamingCategory}
+                    handleRenameCategory={handleRenameCategory}
+                    setCategoryMenu={setCategoryMenu}
+                    setCategoryMenuClosing={setCategoryMenuClosing}
+                    setCategoryMenuConfirmDelete={setCategoryMenuConfirmDelete}
+                    cloudStatusMap={cloudStatusMap}
+                    t={t}
+                  />
+                </Fragment>
               ))}
+              {node.children.length > 0 && (
+                <DropGap
+                  accept="category"
+                  onDrop={(source) => {
+                    if (source.type === "category") {
+                      onDropCategoryInGap(node.category, source.category);
+                    }
+                  }}
+                />
+              )}
             </>
           )}
         </div>
@@ -2008,51 +2057,56 @@ export function MainWindow({
     return b.updatedAt.localeCompare(a.updatedAt);
   };
 
-  const reorderNotesAroundTarget = async (
+  const reorderNotesInCategory = async (
     category: string,
     sourceId: string,
-    targetId: string,
-    position: "before" | "after",
+    beforeNoteId?: string,
   ) => {
     const siblings = notes.filter((note) => note.category === category).sort(noteOrderComparator);
     const sourceIndex = siblings.findIndex((note) => note.id === sourceId);
-    const targetIndex = siblings.findIndex((note) => note.id === targetId);
-    if (sourceIndex === -1 || targetIndex === -1) return;
+    if (sourceIndex === -1) return;
 
-    let insertIndex = position === "after" ? targetIndex + 1 : targetIndex;
-    if (sourceIndex < insertIndex) insertIndex--;
     const reordered = [...siblings];
     const [sourceNote] = reordered.splice(sourceIndex, 1);
-    reordered.splice(insertIndex, 0, sourceNote);
+    if (beforeNoteId) {
+      const targetIndex = reordered.findIndex((note) => note.id === beforeNoteId);
+      if (targetIndex !== -1) {
+        reordered.splice(targetIndex, 0, sourceNote);
+      } else {
+        reordered.push(sourceNote);
+      }
+    } else {
+      reordered.push(sourceNote);
+    }
 
     await reorderNotes(reordered.map((note) => note.id));
   };
 
-  const reorderCategoriesAroundTarget = async (
-    sourceCategory: string,
-    targetCategory: string,
-    position: "before" | "after",
-  ) => {
+  const handleDropNoteInGap = async (category: string, noteId: string, beforeNoteId?: string) => {
+    const sourceNote = notes.find((note) => note.id === noteId);
+    if (!sourceNote) return;
+
+    try {
+      if (sourceNote.category !== category) {
+        await moveNoteCategory(noteId, category);
+        await refreshNotes();
+      }
+      await reorderNotesInCategory(category, noteId, beforeNoteId);
+      await refreshNotes();
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  };
+
+  const reorderCategorySiblings = async (parentCategory: string, orderedSiblings: string[]) => {
     const currentOrder = settingsConfig?.categoryOrder ?? [];
     const baseline = [...categories].sort((a, b) => compareCategoryOrder(a, b, currentOrder));
-    const parent = parentCategoryPath(targetCategory);
-    if (parentCategoryPath(sourceCategory) !== parent) return;
-
-    const siblings = baseline.filter((category) => parentCategoryPath(category) === parent);
-    const sourceIndex = siblings.indexOf(sourceCategory);
-    const targetIndex = siblings.indexOf(targetCategory);
-    if (sourceIndex === -1 || targetIndex === -1 || sourceIndex === targetIndex) return;
-
-    let insertIndex = position === "after" ? targetIndex + 1 : targetIndex;
-    if (sourceIndex < insertIndex) insertIndex--;
-    const reordered = [...siblings];
-    reordered.splice(sourceIndex, 1);
-    reordered.splice(insertIndex, 0, sourceCategory);
-
-    const siblingSet = new Set(siblings);
-    const firstSiblingIndex = baseline.indexOf(sourceCategory);
+    const siblingSet = new Set(
+      baseline.filter((category) => parentCategoryPath(category) === parentCategory),
+    );
+    const firstSiblingIndex = baseline.findIndex((category) => siblingSet.has(category));
     const newOrder = baseline.filter((category) => !siblingSet.has(category));
-    newOrder.splice(Math.min(firstSiblingIndex, newOrder.length), 0, ...reordered);
+    newOrder.splice(Math.min(firstSiblingIndex, newOrder.length), 0, ...orderedSiblings);
 
     await reorderCategories(newOrder);
     await refreshNotes();
@@ -2061,47 +2115,61 @@ export function MainWindow({
     );
   };
 
-  const handleDropOnNote = async (
-    source: DragSource,
-    targetNoteId: string,
-    position: "before" | "after",
+  const handleDropCategoryInGap = async (
+    parentCategory: string,
+    category: string,
+    beforeCategory?: string,
   ) => {
-    const target = notes.find((note) => note.id === targetNoteId);
-    if (!target) return;
+    if (beforeCategory && isDescendantCategory(category, beforeCategory)) {
+      showToast(
+        t("errors.cannotMoveCategoryIntoDescendant", {
+          defaultValue: "不能将分类放入其子分类中",
+        }),
+      );
+      return;
+    }
+    if (
+      parentCategory &&
+      (parentCategory === category || parentCategory.startsWith(`${category}/`))
+    ) {
+      showToast(
+        t("errors.cannotMoveCategoryIntoDescendant", {
+          defaultValue: "不能将分类放入其子分类中",
+        }),
+      );
+      return;
+    }
+
+    const newCategory = parentCategory
+      ? `${parentCategory}/${lastCategorySegment(category)}`
+      : lastCategorySegment(category);
 
     try {
-      if (source.type === "note") {
-        const sourceNote = notes.find((note) => note.id === source.id);
-        if (!sourceNote || sourceNote.id === target.id) return;
-        if (sourceNote.category !== target.category) {
-          await moveNoteCategory(source.id, target.category);
-          await refreshNotes();
-        }
-        await reorderNotesAroundTarget(target.category, source.id, target.id, position);
+      if (newCategory !== category) {
+        await renameCategory(category, newCategory);
         await refreshNotes();
-      } else {
-        const targetCategory = target.category;
-        if (!targetCategory) {
-          // 目标笔记未分类：把分类移到根级
-          const newCategory = lastCategorySegment(source.category);
-          if (newCategory !== source.category) {
-            await renameCategory(source.category, newCategory);
-            await refreshNotes();
-          }
-          return;
-        }
-        const parent = parentCategoryPath(targetCategory);
-        const newCategory = parent
-          ? `${parent}/${lastCategorySegment(source.category)}`
-          : lastCategorySegment(source.category);
-        if (newCategory === source.category) {
-          await reorderCategoriesAroundTarget(source.category, targetCategory, position);
-        } else {
-          await renameCategory(source.category, newCategory);
-          await refreshNotes();
-          await reorderCategoriesAroundTarget(newCategory, targetCategory, position);
-        }
       }
+      const effectiveCategory = newCategory;
+      const siblings = categories
+        .filter((cat) => parentCategoryPath(cat) === parentCategory)
+        .sort((a, b) => compareCategoryOrder(a, b, settingsConfig?.categoryOrder ?? []));
+      const sourceIndex = siblings.indexOf(effectiveCategory);
+      if (sourceIndex === -1) return;
+
+      const reordered = [...siblings];
+      reordered.splice(sourceIndex, 1);
+      if (beforeCategory) {
+        const targetIndex = reordered.indexOf(beforeCategory);
+        if (targetIndex !== -1) {
+          reordered.splice(targetIndex, 0, effectiveCategory);
+        } else {
+          reordered.push(effectiveCategory);
+        }
+      } else {
+        reordered.push(effectiveCategory);
+      }
+
+      await reorderCategorySiblings(parentCategory, reordered);
     } catch (error) {
       showToast(getErrorMessage(error));
     }
@@ -2110,7 +2178,7 @@ export function MainWindow({
   const handleDropOnCategory = async (
     source: DragSource,
     targetCategory: string,
-    zone: DropZone,
+    _zone: DropZone,
   ) => {
     if (source.type === "category" && isDescendantCategory(source.category, targetCategory)) {
       showToast(
@@ -2124,41 +2192,10 @@ export function MainWindow({
     try {
       if (source.type === "note") {
         await moveNoteCategory(source.id, targetCategory);
-        if (zone !== "inside") {
-          await refreshNotes();
-          const siblings = notes
-            .filter((note) => note.category === targetCategory)
-            .sort(noteOrderComparator);
-          const sourceIndex = siblings.findIndex((note) => note.id === source.id);
-          if (sourceIndex !== -1) {
-            const reordered = [...siblings];
-            const [sourceNote] = reordered.splice(sourceIndex, 1);
-            if (zone === "before") {
-              reordered.unshift(sourceNote);
-            } else {
-              reordered.push(sourceNote);
-            }
-            await reorderNotes(reordered.map((note) => note.id));
-          }
-        }
-        await refreshNotes();
       } else {
-        if (zone === "inside") {
-          await handleMoveCategory(source.category, targetCategory);
-          return;
-        }
-        const parent = parentCategoryPath(targetCategory);
-        const newCategory = parent
-          ? `${parent}/${lastCategorySegment(source.category)}`
-          : lastCategorySegment(source.category);
-        if (newCategory === source.category) {
-          await reorderCategoriesAroundTarget(source.category, targetCategory, zone);
-        } else {
-          await renameCategory(source.category, newCategory);
-          await refreshNotes();
-          await reorderCategoriesAroundTarget(newCategory, targetCategory, zone);
-        }
+        await handleMoveCategory(source.category, targetCategory);
       }
+      await refreshNotes();
     } catch (error) {
       showToast(getErrorMessage(error));
     }
@@ -2975,21 +3012,39 @@ export function MainWindow({
                           }}
                         >
                           {group.notes.map((note) => (
-                            <NoteItem
-                              key={note.id}
-                              note={note}
-                              isRoot
-                              selectedId={selectedId}
-                              hoveredId={hoveredId}
-                              setHoveredId={setHoveredId}
-                              setDragOverCategory={setDragOverCategory}
-                              onSelect={handleSelectNote}
-                              onOpenMenu={handleOpenNoteMenu}
-                              onDropOnNote={handleDropOnNote}
-                              cloudStatusMap={cloudStatusMap}
-                              t={t}
-                            />
+                            <Fragment key={`root-gap-${note.id}`}>
+                              <DropGap
+                                accept="note"
+                                onDrop={(source) => {
+                                  if (source.type === "note") {
+                                    handleDropNoteInGap("", source.id, note.id);
+                                  }
+                                }}
+                              />
+                              <NoteItem
+                                note={note}
+                                isRoot
+                                selectedId={selectedId}
+                                hoveredId={hoveredId}
+                                setHoveredId={setHoveredId}
+                                setDragOverCategory={setDragOverCategory}
+                                onSelect={handleSelectNote}
+                                onOpenMenu={handleOpenNoteMenu}
+                                cloudStatusMap={cloudStatusMap}
+                                t={t}
+                              />
+                            </Fragment>
                           ))}
+                          {group.notes.length > 0 && (
+                            <DropGap
+                              accept="note"
+                              onDrop={(source) => {
+                                if (source.type === "note") {
+                                  handleDropNoteInGap("", source.id);
+                                }
+                              }}
+                            />
+                          )}
                         </div>
                       );
                     }
@@ -3000,35 +3055,58 @@ export function MainWindow({
                   })}
 
                   {categoryTree.map((node) => (
-                    <CategoryNode
-                      key={node.category}
-                      node={node}
-                      level={0}
-                      selectedId={selectedId}
-                      hoveredId={hoveredId}
-                      setHoveredId={setHoveredId}
-                      renamingCategory={renamingCategory}
-                      renameCategoryValue={renameCategoryValue}
-                      setRenameCategoryValue={setRenameCategoryValue}
-                      collapsedCategories={collapsedCategories}
-                      toggleCategoryCollapse={toggleCategoryCollapse}
-                      dragOverCategory={dragOverCategory}
-                      setDragOverCategory={setDragOverCategory}
-                      draggingCategory={draggingCategory}
-                      setDraggingCategory={setDraggingCategory}
-                      onDropOnNote={handleDropOnNote}
-                      onDropOnCategory={handleDropOnCategory}
-                      handleSelectNote={handleSelectNote}
-                      handleOpenNoteMenu={handleOpenNoteMenu}
-                      setRenamingCategory={setRenamingCategory}
-                      handleRenameCategory={handleRenameCategory}
-                      setCategoryMenu={setCategoryMenu}
-                      setCategoryMenuClosing={setCategoryMenuClosing}
-                      setCategoryMenuConfirmDelete={setCategoryMenuConfirmDelete}
-                      cloudStatusMap={cloudStatusMap}
-                      t={t}
-                    />
+                    <Fragment key={`root-cat-gap-${node.category}`}>
+                      <DropGap
+                        accept="category"
+                        disabled={Boolean(
+                          draggingCategory && isDescendantCategory(draggingCategory, node.category),
+                        )}
+                        onDrop={(source) => {
+                          if (source.type === "category") {
+                            handleDropCategoryInGap("", source.category, node.category);
+                          }
+                        }}
+                      />
+                      <CategoryNode
+                        node={node}
+                        level={0}
+                        selectedId={selectedId}
+                        hoveredId={hoveredId}
+                        setHoveredId={setHoveredId}
+                        renamingCategory={renamingCategory}
+                        renameCategoryValue={renameCategoryValue}
+                        setRenameCategoryValue={setRenameCategoryValue}
+                        collapsedCategories={collapsedCategories}
+                        toggleCategoryCollapse={toggleCategoryCollapse}
+                        dragOverCategory={dragOverCategory}
+                        setDragOverCategory={setDragOverCategory}
+                        draggingCategory={draggingCategory}
+                        setDraggingCategory={setDraggingCategory}
+                        onDropOnCategory={handleDropOnCategory}
+                        onDropNoteInGap={handleDropNoteInGap}
+                        onDropCategoryInGap={handleDropCategoryInGap}
+                        handleSelectNote={handleSelectNote}
+                        handleOpenNoteMenu={handleOpenNoteMenu}
+                        setRenamingCategory={setRenamingCategory}
+                        handleRenameCategory={handleRenameCategory}
+                        setCategoryMenu={setCategoryMenu}
+                        setCategoryMenuClosing={setCategoryMenuClosing}
+                        setCategoryMenuConfirmDelete={setCategoryMenuConfirmDelete}
+                        cloudStatusMap={cloudStatusMap}
+                        t={t}
+                      />
+                    </Fragment>
                   ))}
+                  {categoryTree.length > 0 && (
+                    <DropGap
+                      accept="category"
+                      onDrop={(source) => {
+                        if (source.type === "category") {
+                          handleDropCategoryInGap("", source.category);
+                        }
+                      }}
+                    />
+                  )}
 
                   {!isLoading && filteredNotes.length === 0 && externalFiles.length === 0 && (
                     <div className="px-3 py-8 text-center text-[12px] text-ink-ghost leading-relaxed">
