@@ -356,6 +356,10 @@ function dropZoneByPixels(
   return "inside";
 }
 
+function isDescendantCategory(parent: string, child: string): boolean {
+  return child === parent || child.startsWith(`${parent}/`);
+}
+
 interface NoteItemProps {
   note: NoteMetadata;
   isRoot?: boolean;
@@ -401,9 +405,10 @@ function NoteItem({
         setDragOverPosition(null);
       }}
       onDragOver={(e) => {
-        const source = readDragSource(e.dataTransfer);
-        if (!source || !itemRef.current) return;
-        if (source.type === "note" && source.id === note.id) return;
+        const hasNote = hasDragType(e.dataTransfer, NOTE_DRAG_MIME);
+        const hasCategory = hasDragType(e.dataTransfer, CATEGORY_DRAG_MIME);
+        if (!hasNote && !hasCategory) return;
+        if (!itemRef.current) return;
         e.preventDefault();
         e.stopPropagation();
         e.dataTransfer.dropEffect = "move";
@@ -419,6 +424,15 @@ function NoteItem({
         }
         if (source.type === "note" && source.id === note.id) {
           setDragOverPosition(null);
+          return;
+        }
+        if (source.type === "category" && isDescendantCategory(source.category, note.category)) {
+          setDragOverPosition(null);
+          showToast(
+            t("errors.cannotMoveCategoryIntoDescendant", {
+              defaultValue: "不能将分类放入其子分类中",
+            }),
+          );
           return;
         }
         const zone = dropZoneByRatio(e, itemRef.current, 0.5);
@@ -506,6 +520,8 @@ interface CategoryNodeProps {
   toggleCategoryCollapse: (cat: string) => void;
   dragOverCategory: string | null;
   setDragOverCategory: (cat: string | null) => void;
+  draggingCategory: string | null;
+  setDraggingCategory: (cat: string | null) => void;
   onDropOnNote: (source: DragSource, targetNoteId: string, position: "before" | "after") => void;
   onDropOnCategory: (source: DragSource, targetCategory: string, zone: DropZone) => void;
   handleSelectNote: (id: string) => void;
@@ -532,6 +548,8 @@ function CategoryNode({
   toggleCategoryCollapse,
   dragOverCategory,
   setDragOverCategory,
+  draggingCategory,
+  setDraggingCategory,
   onDropOnNote,
   onDropOnCategory,
   handleSelectNote,
@@ -546,17 +564,23 @@ function CategoryNode({
 }: CategoryNodeProps) {
   const isCollapsed = collapsedCategories.has(node.category);
   const [headerDropZone, setHeaderDropZone] = useState<DropZone | null>(null);
+  const [isForbidden, setIsForbidden] = useState(false);
   const headerRef = useRef<HTMLDivElement>(null);
+  const isInvalidCategoryDrop = Boolean(
+    draggingCategory && isDescendantCategory(draggingCategory, node.category),
+  );
   return (
     <div key={node.category} className="px-2 mb-0.5" style={{ paddingLeft: `${level * 12}px` }}>
       <div
         ref={headerRef}
         className={`relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg group/cat cursor-pointer select-none transition-all duration-200 ${
-          dragOverCategory === node.category
-            ? "bg-bamboo/15 border border-bamboo/40 ring-1 ring-bamboo/20"
-            : isCollapsed
-              ? "bg-transparent border border-bamboo/15"
-              : "bg-bamboo/8 border border-bamboo/15 rounded-b-none"
+          isForbidden || isInvalidCategoryDrop
+            ? "bg-red-500/10 border border-red-400/40"
+            : dragOverCategory === node.category
+              ? "bg-bamboo/15 border border-bamboo/40 ring-1 ring-bamboo/20"
+              : isCollapsed
+                ? "bg-transparent border border-bamboo/15"
+                : "bg-bamboo/8 border border-bamboo/15 rounded-b-none"
         }`}
         draggable
         onClick={() => toggleCategoryCollapse(node.category)}
@@ -574,15 +598,27 @@ function CategoryNode({
         onDragStart={(e) => {
           e.dataTransfer.setData(CATEGORY_DRAG_MIME, node.category);
           e.dataTransfer.effectAllowed = "move";
+          setDraggingCategory(node.category);
         }}
         onDragEnd={() => {
+          setDraggingCategory(null);
           setDragOverCategory(null);
           setHeaderDropZone(null);
+          setIsForbidden(false);
         }}
         onDragOver={(e) => {
-          const source = readDragSource(e.dataTransfer);
-          if (!source || !headerRef.current) return;
-          if (source.type === "category" && source.category === node.category) return;
+          const hasNote = hasDragType(e.dataTransfer, NOTE_DRAG_MIME);
+          const hasCategory = hasDragType(e.dataTransfer, CATEGORY_DRAG_MIME);
+          if (!hasNote && !hasCategory) return;
+          if (!headerRef.current) return;
+          if (isInvalidCategoryDrop) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.dataTransfer.dropEffect = "none";
+            setDragOverCategory(node.category);
+            setIsForbidden(true);
+            return;
+          }
           e.preventDefault();
           e.stopPropagation();
           e.dataTransfer.dropEffect = "move";
@@ -597,17 +633,27 @@ function CategoryNode({
             setDragOverCategory(null);
           }
           setHeaderDropZone(null);
+          setIsForbidden(false);
         }}
         onDrop={(e) => {
           const source = readDragSource(e.dataTransfer);
           if (!source || !headerRef.current) {
             setDragOverCategory(null);
             setHeaderDropZone(null);
+            setIsForbidden(false);
             return;
           }
-          if (source.type === "category" && source.category === node.category) {
+          if (source.type === "category" && isDescendantCategory(source.category, node.category)) {
+            e.preventDefault();
+            e.stopPropagation();
             setDragOverCategory(null);
             setHeaderDropZone(null);
+            setIsForbidden(false);
+            showToast(
+              t("errors.cannotMoveCategoryIntoDescendant", {
+                defaultValue: "不能将分类放入其子分类中",
+              }),
+            );
             return;
           }
           const zone = isCollapsed
@@ -617,6 +663,7 @@ function CategoryNode({
           e.stopPropagation();
           setDragOverCategory(null);
           setHeaderDropZone(null);
+          setIsForbidden(false);
           void onDropOnCategory(source, node.category, zone);
         }}
       >
@@ -626,7 +673,7 @@ function CategoryNode({
         {headerDropZone === "after" && (
           <div className="absolute -bottom-[1px] left-0 right-0 h-[2px] bg-bamboo rounded-full z-10" />
         )}
-        {headerDropZone === "inside" && (
+        {headerDropZone === "inside" && !isForbidden && (
           <div className="absolute inset-0 rounded-lg border-2 border-dashed border-bamboo/40 pointer-events-none z-10" />
         )}
         <svg
@@ -743,6 +790,8 @@ function CategoryNode({
                   toggleCategoryCollapse={toggleCategoryCollapse}
                   dragOverCategory={dragOverCategory}
                   setDragOverCategory={setDragOverCategory}
+                  draggingCategory={draggingCategory}
+                  setDraggingCategory={setDraggingCategory}
                   onDropOnNote={onDropOnNote}
                   onDropOnCategory={onDropOnCategory}
                   handleSelectNote={handleSelectNote}
@@ -816,6 +865,7 @@ export function MainWindow({
   const [renamingCategory, setRenamingCategory] = useState<string | null>(null);
   const [renameCategoryValue, setRenameCategoryValue] = useState("");
   const [dragOverCategory, setDragOverCategory] = useState<string | null>(null);
+  const [draggingCategory, setDraggingCategory] = useState<string | null>(null);
   const [trashedNotes, setTrashedNotes] = useState<NoteMetadata[]>([]);
   const [trashExpanded, setTrashExpanded] = useState(false);
   const [permanentDeleteConfirm, setPermanentDeleteConfirm] = useState<string | null>(null);
@@ -2062,6 +2112,15 @@ export function MainWindow({
     targetCategory: string,
     zone: DropZone,
   ) => {
+    if (source.type === "category" && isDescendantCategory(source.category, targetCategory)) {
+      showToast(
+        t("errors.cannotMoveCategoryIntoDescendant", {
+          defaultValue: "不能将分类放入其子分类中",
+        }),
+      );
+      return;
+    }
+
     try {
       if (source.type === "note") {
         await moveNoteCategory(source.id, targetCategory);
@@ -2955,6 +3014,8 @@ export function MainWindow({
                       toggleCategoryCollapse={toggleCategoryCollapse}
                       dragOverCategory={dragOverCategory}
                       setDragOverCategory={setDragOverCategory}
+                      draggingCategory={draggingCategory}
+                      setDraggingCategory={setDraggingCategory}
                       onDropOnNote={handleDropOnNote}
                       onDropOnCategory={handleDropOnCategory}
                       handleSelectNote={handleSelectNote}
