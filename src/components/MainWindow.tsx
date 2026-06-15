@@ -318,19 +318,42 @@ interface MainWindowProps {
   initialConfig?: AppConfig;
 }
 
-const NOTE_DRAG_CATEGORY_MIME = "application/x-floral-note-category";
+type DropZone = "before" | "inside" | "after";
 
-function getDragNoteCategory(dataTransfer: DataTransfer): string | null {
-  return dataTransfer.getData(NOTE_DRAG_CATEGORY_MIME) || null;
+type DragSource = { type: "note"; id: string } | { type: "category"; category: string };
+
+function readDragSource(dataTransfer: DataTransfer): DragSource | null {
+  const noteId = dataTransfer.getData(NOTE_DRAG_MIME);
+  if (noteId) return { type: "note", id: noteId };
+  const category = dataTransfer.getData(CATEGORY_DRAG_MIME);
+  if (category) return { type: "category", category };
+  return null;
 }
 
-function dropPositionNear(
+function dropZoneByRatio(
   event: React.DragEvent<HTMLElement>,
   element: HTMLElement,
-): "before" | "after" {
+  edgeRatio: number,
+): DropZone {
   const rect = element.getBoundingClientRect();
   const offset = event.clientY - rect.top;
-  return offset < rect.height / 2 ? "before" : "after";
+  const height = Math.max(rect.height, 1);
+  if (offset < height * edgeRatio) return "before";
+  if (offset > height * (1 - edgeRatio)) return "after";
+  return "inside";
+}
+
+function dropZoneByPixels(
+  event: React.DragEvent<HTMLElement>,
+  element: HTMLElement,
+  edgePixels: number,
+): DropZone {
+  const rect = element.getBoundingClientRect();
+  const offset = event.clientY - rect.top;
+  const height = Math.max(rect.height, edgePixels * 2 + 1);
+  if (offset < edgePixels) return "before";
+  if (offset > height - edgePixels) return "after";
+  return "inside";
 }
 
 interface NoteItemProps {
@@ -342,7 +365,7 @@ interface NoteItemProps {
   setDragOverCategory: (cat: string | null) => void;
   onSelect: (id: string) => void;
   onOpenMenu: (event: MouseEvent<HTMLElement>, id: string) => void;
-  onReorderNote?: (sourceId: string, targetId: string, position: "before" | "after") => void;
+  onDropOnNote: (source: DragSource, targetNoteId: string, position: "before" | "after") => void;
   cloudStatusMap: Record<string, boolean>;
   t: TFunction;
 }
@@ -356,7 +379,7 @@ function NoteItem({
   setDragOverCategory,
   onSelect,
   onOpenMenu,
-  onReorderNote,
+  onDropOnNote,
   cloudStatusMap,
   t,
 }: NoteItemProps) {
@@ -371,7 +394,6 @@ function NoteItem({
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData(NOTE_DRAG_MIME, note.id);
-        e.dataTransfer.setData(NOTE_DRAG_CATEGORY_MIME, note.category);
         e.dataTransfer.effectAllowed = "move";
       }}
       onDragEnd={() => {
@@ -379,33 +401,35 @@ function NoteItem({
         setDragOverPosition(null);
       }}
       onDragOver={(e) => {
-        if (!hasDragType(e.dataTransfer, NOTE_DRAG_MIME)) return;
-        const sourceCategory = getDragNoteCategory(e.dataTransfer);
-        if (sourceCategory !== note.category) return;
-        if (!itemRef.current || !onReorderNote) return;
+        const source = readDragSource(e.dataTransfer);
+        if (!source || !itemRef.current) return;
+        if (source.type === "note" && source.id === note.id) return;
         e.preventDefault();
         e.stopPropagation();
         e.dataTransfer.dropEffect = "move";
-        setDragOverPosition(dropPositionNear(e, itemRef.current));
+        const zone = dropZoneByRatio(e, itemRef.current, 0.5);
+        if (zone !== "inside") setDragOverPosition(zone);
       }}
       onDragLeave={() => setDragOverPosition(null)}
       onDrop={(e) => {
-        if (!hasDragType(e.dataTransfer, NOTE_DRAG_MIME)) return;
-        const sourceCategory = getDragNoteCategory(e.dataTransfer);
-        if (sourceCategory !== note.category || !onReorderNote) {
+        const source = readDragSource(e.dataTransfer);
+        if (!source || !itemRef.current) {
           setDragOverPosition(null);
           return;
         }
-        const sourceId = getDragNoteId(e.dataTransfer);
-        if (!sourceId || sourceId === note.id || !itemRef.current) {
+        if (source.type === "note" && source.id === note.id) {
+          setDragOverPosition(null);
+          return;
+        }
+        const zone = dropZoneByRatio(e, itemRef.current, 0.5);
+        if (zone === "inside") {
           setDragOverPosition(null);
           return;
         }
         e.preventDefault();
         e.stopPropagation();
-        const position = dropPositionNear(e, itemRef.current);
         setDragOverPosition(null);
-        onReorderNote(sourceId, note.id, position);
+        onDropOnNote(source, note.id, zone);
       }}
       onClick={() => onSelect(note.id)}
       onContextMenu={(event) => onOpenMenu(event, note.id)}
@@ -482,14 +506,8 @@ interface CategoryNodeProps {
   toggleCategoryCollapse: (cat: string) => void;
   dragOverCategory: string | null;
   setDragOverCategory: (cat: string | null) => void;
-  handleMoveNote: (noteId: string, targetCategory: string) => void;
-  handleMoveCategory: (sourceCategory: string, targetCategory: string) => void;
-  handleReorderNote: (sourceId: string, targetId: string, position: "before" | "after") => void;
-  handleReorderCategory: (
-    sourceCategory: string,
-    targetCategory: string,
-    position: "before" | "after",
-  ) => void;
+  onDropOnNote: (source: DragSource, targetNoteId: string, position: "before" | "after") => void;
+  onDropOnCategory: (source: DragSource, targetCategory: string, zone: DropZone) => void;
   handleSelectNote: (id: string) => void;
   handleOpenNoteMenu: (event: MouseEvent<HTMLElement>, id: string) => void;
   setRenamingCategory: (cat: string | null) => void;
@@ -514,10 +532,8 @@ function CategoryNode({
   toggleCategoryCollapse,
   dragOverCategory,
   setDragOverCategory,
-  handleMoveNote,
-  handleMoveCategory,
-  handleReorderNote,
-  handleReorderCategory,
+  onDropOnNote,
+  onDropOnCategory,
   handleSelectNote,
   handleOpenNoteMenu,
   setRenamingCategory,
@@ -529,7 +545,7 @@ function CategoryNode({
   t,
 }: CategoryNodeProps) {
   const isCollapsed = collapsedCategories.has(node.category);
-  const [categoryDragPosition, setCategoryDragPosition] = useState<"before" | "after" | null>(null);
+  const [headerDropZone, setHeaderDropZone] = useState<DropZone | null>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   return (
     <div key={node.category} className="px-2 mb-0.5" style={{ paddingLeft: `${level * 12}px` }}>
@@ -561,76 +577,57 @@ function CategoryNode({
         }}
         onDragEnd={() => {
           setDragOverCategory(null);
-          setCategoryDragPosition(null);
+          setHeaderDropZone(null);
         }}
         onDragOver={(e) => {
-          const hasNote = hasDragType(e.dataTransfer, NOTE_DRAG_MIME);
-          const hasCategory = hasDragType(e.dataTransfer, CATEGORY_DRAG_MIME);
-          if (hasCategory && headerRef.current) {
-            const sourceCategory = getDragCategory(e.dataTransfer);
-            if (
-              sourceCategory &&
-              sourceCategory !== node.category &&
-              parentCategoryPath(sourceCategory) === parentCategoryPath(node.category)
-            ) {
-              e.preventDefault();
-              e.stopPropagation();
-              e.dataTransfer.dropEffect = "move";
-              setDragOverCategory(node.category);
-              setCategoryDragPosition(dropPositionNear(e, headerRef.current));
-              return;
-            }
-          }
-          if (!hasNote && !hasCategory) return;
+          const source = readDragSource(e.dataTransfer);
+          if (!source || !headerRef.current) return;
+          if (source.type === "category" && source.category === node.category) return;
           e.preventDefault();
           e.stopPropagation();
           e.dataTransfer.dropEffect = "move";
           setDragOverCategory(node.category);
+          const zone = isCollapsed
+            ? dropZoneByRatio(e, headerRef.current, 1 / 3)
+            : dropZoneByPixels(e, headerRef.current, 30);
+          setHeaderDropZone(zone);
         }}
         onDragLeave={(e) => {
           if (!e.currentTarget.parentElement?.contains(e.relatedTarget as Node)) {
             setDragOverCategory(null);
           }
-          setCategoryDragPosition(null);
+          setHeaderDropZone(null);
         }}
         onDrop={(e) => {
-          const hasCategory = hasDragType(e.dataTransfer, CATEGORY_DRAG_MIME);
-          if (hasCategory && headerRef.current) {
-            const sourceCategory = getDragCategory(e.dataTransfer);
-            if (
-              sourceCategory &&
-              sourceCategory !== node.category &&
-              parentCategoryPath(sourceCategory) === parentCategoryPath(node.category)
-            ) {
-              e.preventDefault();
-              e.stopPropagation();
-              const position = dropPositionNear(e, headerRef.current);
-              setDragOverCategory(null);
-              setCategoryDragPosition(null);
-              void handleReorderCategory(sourceCategory, node.category, position);
-              return;
-            }
+          const source = readDragSource(e.dataTransfer);
+          if (!source || !headerRef.current) {
+            setDragOverCategory(null);
+            setHeaderDropZone(null);
+            return;
           }
+          if (source.type === "category" && source.category === node.category) {
+            setDragOverCategory(null);
+            setHeaderDropZone(null);
+            return;
+          }
+          const zone = isCollapsed
+            ? dropZoneByRatio(e, headerRef.current, 1 / 3)
+            : dropZoneByPixels(e, headerRef.current, 30);
           e.preventDefault();
           e.stopPropagation();
           setDragOverCategory(null);
-          setCategoryDragPosition(null);
-          const noteId = getDragNoteId(e.dataTransfer);
-          if (noteId) {
-            void handleMoveNote(noteId, node.category);
-            return;
-          }
-          const sourceCategory = getDragCategory(e.dataTransfer);
-          if (sourceCategory) {
-            void handleMoveCategory(sourceCategory, node.category);
-          }
+          setHeaderDropZone(null);
+          void onDropOnCategory(source, node.category, zone);
         }}
       >
-        {categoryDragPosition === "before" && (
+        {headerDropZone === "before" && (
           <div className="absolute -top-[1px] left-0 right-0 h-[2px] bg-bamboo rounded-full z-10" />
         )}
-        {categoryDragPosition === "after" && (
+        {headerDropZone === "after" && (
           <div className="absolute -bottom-[1px] left-0 right-0 h-[2px] bg-bamboo rounded-full z-10" />
+        )}
+        {headerDropZone === "inside" && (
+          <div className="absolute inset-0 rounded-lg border-2 border-dashed border-bamboo/40 pointer-events-none z-10" />
         )}
         <svg
           width="10"
@@ -701,18 +698,12 @@ function CategoryNode({
             }
           }}
           onDrop={(e) => {
+            const source = readDragSource(e.dataTransfer);
+            if (!source) return;
             e.preventDefault();
             e.stopPropagation();
             setDragOverCategory(null);
-            const noteId = getDragNoteId(e.dataTransfer);
-            if (noteId) {
-              void handleMoveNote(noteId, node.category);
-              return;
-            }
-            const sourceCategory = getDragCategory(e.dataTransfer);
-            if (sourceCategory) {
-              void handleMoveCategory(sourceCategory, node.category);
-            }
+            void onDropOnCategory(source, node.category, "inside");
           }}
         >
           {node.notes.length === 0 && node.children.length === 0 ? (
@@ -732,7 +723,7 @@ function CategoryNode({
                   setDragOverCategory={setDragOverCategory}
                   onSelect={handleSelectNote}
                   onOpenMenu={handleOpenNoteMenu}
-                  onReorderNote={handleReorderNote}
+                  onDropOnNote={onDropOnNote}
                   cloudStatusMap={cloudStatusMap}
                   t={t}
                 />
@@ -752,10 +743,8 @@ function CategoryNode({
                   toggleCategoryCollapse={toggleCategoryCollapse}
                   dragOverCategory={dragOverCategory}
                   setDragOverCategory={setDragOverCategory}
-                  handleMoveNote={handleMoveNote}
-                  handleMoveCategory={handleMoveCategory}
-                  handleReorderNote={handleReorderNote}
-                  handleReorderCategory={handleReorderCategory}
+                  onDropOnNote={onDropOnNote}
+                  onDropOnCategory={onDropOnCategory}
                   handleSelectNote={handleSelectNote}
                   handleOpenNoteMenu={handleOpenNoteMenu}
                   setRenamingCategory={setRenamingCategory}
@@ -1969,19 +1958,13 @@ export function MainWindow({
     return b.updatedAt.localeCompare(a.updatedAt);
   };
 
-  const handleReorderNote = async (
+  const reorderNotesAroundTarget = async (
+    category: string,
     sourceId: string,
     targetId: string,
     position: "before" | "after",
   ) => {
-    const source = notes.find((note) => note.id === sourceId);
-    const target = notes.find((note) => note.id === targetId);
-    if (!source || !target || source.id === target.id) return;
-    if (source.category !== target.category) return;
-
-    const siblings = notes
-      .filter((note) => note.category === target.category)
-      .sort(noteOrderComparator);
+    const siblings = notes.filter((note) => note.category === category).sort(noteOrderComparator);
     const sourceIndex = siblings.findIndex((note) => note.id === sourceId);
     const targetIndex = siblings.findIndex((note) => note.id === targetId);
     if (sourceIndex === -1 || targetIndex === -1) return;
@@ -1989,26 +1972,21 @@ export function MainWindow({
     let insertIndex = position === "after" ? targetIndex + 1 : targetIndex;
     if (sourceIndex < insertIndex) insertIndex--;
     const reordered = [...siblings];
-    reordered.splice(sourceIndex, 1);
-    reordered.splice(insertIndex, 0, source);
+    const [sourceNote] = reordered.splice(sourceIndex, 1);
+    reordered.splice(insertIndex, 0, sourceNote);
 
-    try {
-      await reorderNotes(reordered.map((note) => note.id));
-      await refreshNotes();
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    }
+    await reorderNotes(reordered.map((note) => note.id));
   };
 
-  const handleReorderCategory = async (
+  const reorderCategoriesAroundTarget = async (
     sourceCategory: string,
     targetCategory: string,
     position: "before" | "after",
   ) => {
     const currentOrder = settingsConfig?.categoryOrder ?? [];
     const baseline = [...categories].sort((a, b) => compareCategoryOrder(a, b, currentOrder));
-    const parent = parentCategoryPath(sourceCategory);
-    if (parentCategoryPath(targetCategory) !== parent) return;
+    const parent = parentCategoryPath(targetCategory);
+    if (parentCategoryPath(sourceCategory) !== parent) return;
 
     const siblings = baseline.filter((category) => parentCategoryPath(category) === parent);
     const sourceIndex = siblings.indexOf(sourceCategory);
@@ -2026,12 +2004,102 @@ export function MainWindow({
     const newOrder = baseline.filter((category) => !siblingSet.has(category));
     newOrder.splice(Math.min(firstSiblingIndex, newOrder.length), 0, ...reordered);
 
+    await reorderCategories(newOrder);
+    await refreshNotes();
+    setSettingsConfig((previous) =>
+      previous ? { ...previous, categoryOrder: newOrder } : previous,
+    );
+  };
+
+  const handleDropOnNote = async (
+    source: DragSource,
+    targetNoteId: string,
+    position: "before" | "after",
+  ) => {
+    const target = notes.find((note) => note.id === targetNoteId);
+    if (!target) return;
+
     try {
-      await reorderCategories(newOrder);
-      await refreshNotes();
-      setSettingsConfig((previous) =>
-        previous ? { ...previous, categoryOrder: newOrder } : previous,
-      );
+      if (source.type === "note") {
+        const sourceNote = notes.find((note) => note.id === source.id);
+        if (!sourceNote || sourceNote.id === target.id) return;
+        if (sourceNote.category !== target.category) {
+          await moveNoteCategory(source.id, target.category);
+          await refreshNotes();
+        }
+        await reorderNotesAroundTarget(target.category, source.id, target.id, position);
+        await refreshNotes();
+      } else {
+        const targetCategory = target.category;
+        if (!targetCategory) {
+          // 目标笔记未分类：把分类移到根级
+          const newCategory = lastCategorySegment(source.category);
+          if (newCategory !== source.category) {
+            await renameCategory(source.category, newCategory);
+            await refreshNotes();
+          }
+          return;
+        }
+        const parent = parentCategoryPath(targetCategory);
+        const newCategory = parent
+          ? `${parent}/${lastCategorySegment(source.category)}`
+          : lastCategorySegment(source.category);
+        if (newCategory === source.category) {
+          await reorderCategoriesAroundTarget(source.category, targetCategory, position);
+        } else {
+          await renameCategory(source.category, newCategory);
+          await refreshNotes();
+          await reorderCategoriesAroundTarget(newCategory, targetCategory, position);
+        }
+      }
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  };
+
+  const handleDropOnCategory = async (
+    source: DragSource,
+    targetCategory: string,
+    zone: DropZone,
+  ) => {
+    try {
+      if (source.type === "note") {
+        await moveNoteCategory(source.id, targetCategory);
+        if (zone !== "inside") {
+          await refreshNotes();
+          const siblings = notes
+            .filter((note) => note.category === targetCategory)
+            .sort(noteOrderComparator);
+          const sourceIndex = siblings.findIndex((note) => note.id === source.id);
+          if (sourceIndex !== -1) {
+            const reordered = [...siblings];
+            const [sourceNote] = reordered.splice(sourceIndex, 1);
+            if (zone === "before") {
+              reordered.unshift(sourceNote);
+            } else {
+              reordered.push(sourceNote);
+            }
+            await reorderNotes(reordered.map((note) => note.id));
+          }
+        }
+        await refreshNotes();
+      } else {
+        if (zone === "inside") {
+          await handleMoveCategory(source.category, targetCategory);
+          return;
+        }
+        const parent = parentCategoryPath(targetCategory);
+        const newCategory = parent
+          ? `${parent}/${lastCategorySegment(source.category)}`
+          : lastCategorySegment(source.category);
+        if (newCategory === source.category) {
+          await reorderCategoriesAroundTarget(source.category, targetCategory, zone);
+        } else {
+          await renameCategory(source.category, newCategory);
+          await refreshNotes();
+          await reorderCategoriesAroundTarget(newCategory, targetCategory, zone);
+        }
+      }
     } catch (error) {
       showToast(getErrorMessage(error));
     }
@@ -2858,7 +2926,7 @@ export function MainWindow({
                               setDragOverCategory={setDragOverCategory}
                               onSelect={handleSelectNote}
                               onOpenMenu={handleOpenNoteMenu}
-                              onReorderNote={handleReorderNote}
+                              onDropOnNote={handleDropOnNote}
                               cloudStatusMap={cloudStatusMap}
                               t={t}
                             />
@@ -2887,10 +2955,8 @@ export function MainWindow({
                       toggleCategoryCollapse={toggleCategoryCollapse}
                       dragOverCategory={dragOverCategory}
                       setDragOverCategory={setDragOverCategory}
-                      handleMoveNote={handleMoveNote}
-                      handleMoveCategory={handleMoveCategory}
-                      handleReorderNote={handleReorderNote}
-                      handleReorderCategory={handleReorderCategory}
+                      onDropOnNote={handleDropOnNote}
+                      onDropOnCategory={handleDropOnCategory}
                       handleSelectNote={handleSelectNote}
                       handleOpenNoteMenu={handleOpenNoteMenu}
                       setRenamingCategory={setRenamingCategory}
