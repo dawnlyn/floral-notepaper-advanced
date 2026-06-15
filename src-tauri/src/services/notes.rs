@@ -100,6 +100,8 @@ pub struct AppConfig {
     pub sync_interval: String,
     #[serde(default = "default_sync_strategy")]
     pub sync_strategy: String,
+    #[serde(default)]
+    pub category_order: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -124,6 +126,8 @@ pub struct NoteMetadata {
     pub word_count: usize,
     #[serde(default)]
     pub preview: String,
+    #[serde(default)]
+    pub order: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trashed_at: Option<DateTime<Utc>>,
 }
@@ -481,7 +485,11 @@ impl NoteStore {
             self.note_path_in_category(&note.file_name, &note.category)
                 .exists()
         });
-        metadata.sort_by_key(|note| std::cmp::Reverse(note.updated_at));
+        metadata.sort_by(|a, b| {
+            a.order
+                .cmp(&b.order)
+                .then_with(|| b.updated_at.cmp(&a.updated_at))
+        });
         Ok(metadata)
     }
 
@@ -523,6 +531,7 @@ impl NoteStore {
             updated_at: now,
             word_count,
             preview: preview(&request.content),
+            order: self.next_note_order(),
             trashed_at: None,
         };
 
@@ -577,6 +586,7 @@ impl NoteStore {
                 updated_at: meta.updated_at,
                 word_count: meta.word_count,
                 preview: preview(content),
+                order: meta.order,
                 trashed_at: None,
             };
         } else if let Some(trash_index) =
@@ -611,6 +621,7 @@ impl NoteStore {
                 updated_at: meta.updated_at,
                 word_count: meta.word_count,
                 preview: preview(content),
+                order: 0,
                 trashed_at: None,
             });
         }
@@ -1020,6 +1031,22 @@ impl NoteStore {
             }
         }
         self.save_metadata(&metadata_file)?;
+
+        let mut config = self.load_config()?;
+        config.category_order = config
+            .category_order
+            .into_iter()
+            .map(|entry| {
+                if entry == old_category {
+                    new_category.clone()
+                } else if entry.starts_with(&old_prefix) {
+                    format!("{}{}", new_category, &entry[old_category.len()..])
+                } else {
+                    entry
+                }
+            })
+            .collect();
+        self.save_config(config)?;
         Ok(())
     }
 
@@ -1065,6 +1092,13 @@ impl NoteStore {
             // Move to recycle bin instead of permanent deletion
             trash::delete(&category_path)
                 .map_err(|e| AppError::new("trash", format!("移入回收站失败: {e}")))?;
+
+            let mut config = self.load_config()?;
+            let prefix = format!("{}/", category);
+            config
+                .category_order
+                .retain(|entry| *entry != category && !entry.starts_with(&prefix));
+            self.save_config(config)?;
         } else {
             // Directory already gone (manually deleted outside the app);
             // clean up any stale metadata references.
@@ -1118,6 +1152,49 @@ impl NoteStore {
         Ok(result)
     }
 
+    fn next_note_order(&self) -> u32 {
+        let Ok(metadata_file) = self.load_metadata() else {
+            return 1;
+        };
+        metadata_file
+            .notes
+            .iter()
+            .map(|note| note.order)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1)
+    }
+
+    pub fn reorder_notes(&self, ordered_ids: &[String]) -> Result<(), AppError> {
+        self.ensure_storage()?;
+        let mut metadata_file = self.load_metadata()?;
+        let start = metadata_file
+            .notes
+            .iter()
+            .map(|note| note.order)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+        for (index, id) in ordered_ids.iter().enumerate() {
+            let order = start + index as u32;
+            if let Some(note) = metadata_file.notes.iter_mut().find(|note| note.id == *id) {
+                note.order = order;
+            }
+        }
+        self.save_metadata(&metadata_file)?;
+        Ok(())
+    }
+
+    pub fn reorder_categories(&self, ordered_categories: &[String]) -> Result<(), AppError> {
+        let mut config = self.load_config()?;
+        config.category_order = ordered_categories
+            .iter()
+            .map(|category| normalize_category_path(category))
+            .collect();
+        self.save_config(config)?;
+        Ok(())
+    }
+
     fn default_config(&self) -> AppConfig {
         AppConfig {
             locale: default_locale(),
@@ -1162,6 +1239,7 @@ impl NoteStore {
             sync_on_startup: false,
             sync_interval: "off".into(),
             sync_strategy: default_sync_strategy(),
+            category_order: Vec::new(),
         }
     }
 
@@ -1415,6 +1493,7 @@ impl NoteStore {
                 updated_at: modified,
                 word_count: count_words(&content),
                 preview: preview(&content),
+                order: 0,
                 trashed_at: None,
             });
         }
@@ -1766,6 +1845,7 @@ mod tests {
             sync_on_startup: false,
             sync_interval: "".to_string(),
             sync_strategy: "".to_string(),
+            category_order: Vec::new(),
         };
 
         store.save_config(saved.clone()).expect("save config");

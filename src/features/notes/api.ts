@@ -67,6 +67,14 @@ export function moveNoteCategory(id: string, category: string): Promise<NoteMeta
   return invoke("notes_move_category", { id, category });
 }
 
+export function reorderNotes(orderedIds: string[]): Promise<void> {
+  return invoke("notes_reorder", { orderedIds });
+}
+
+export function reorderCategories(orderedCategories: string[]): Promise<void> {
+  return invoke("categories_reorder", { orderedCategories });
+}
+
 export function listCategories(): Promise<string[]> {
   return invoke("categories_list");
 }

@@ -2578,6 +2578,7 @@ mod tests {
             toggle_visibility_shortcut: toggle_visibility_shortcut.into(),
             last_known_base_dir: None,
             sync_strategy: "".to_string(),
+            category_order: Vec::new(),
         }
     }
 
@@ -2667,6 +2668,7 @@ mod tests {
             sync_on_startup: false,
             sync_interval: "off".into(),
             sync_strategy: "localWins".into(),
+            category_order: Vec::new(),
         };
         let next = AppConfig {
             locale: "en-US".into(),
@@ -2708,6 +2710,7 @@ mod tests {
             sync_on_startup: true,
             sync_interval: "5min".into(),
             sync_strategy: "remoteWins".into(),
+            category_order: Vec::new(),
         };
 
         assert_eq!(

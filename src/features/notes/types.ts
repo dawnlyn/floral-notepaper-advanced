@@ -7,6 +7,7 @@ export interface NoteMetadata {
   updatedAt: string;
   wordCount: number;
   preview: string;
+  order?: number;
   trashedAt?: string;
 }
 

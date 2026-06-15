@@ -47,6 +47,8 @@ import {
   permanentDeleteNote,
   readExternalFile,
   renameCategory,
+  reorderCategories,
+  reorderNotes,
   restoreNote,
   saveExternalFile,
   trashNote,
@@ -58,6 +60,7 @@ import { useImageBaseDir } from "../features/images/useImageBaseDir";
 import type { ExternalFile, Note, NoteMetadata } from "../features/notes/types";
 import {
   buildCategoryTree,
+  compareCategoryOrder,
   countNoteChars,
   filterNotes,
   formatShortDate,
@@ -65,6 +68,7 @@ import {
   getDisplayTitle,
   groupNotesByCategory,
   metadataFromNote,
+  parentCategoryPath,
 } from "../features/notes/noteUtils";
 import type { CategoryGroup, CategoryTreeNode } from "../features/notes/noteUtils";
 import {
@@ -313,6 +317,21 @@ interface MainWindowProps {
   initialConfig?: AppConfig;
 }
 
+const NOTE_DRAG_CATEGORY_MIME = "application/x-floral-note-category";
+
+function getDragNoteCategory(dataTransfer: DataTransfer): string | null {
+  return dataTransfer.getData(NOTE_DRAG_CATEGORY_MIME) || null;
+}
+
+function dropPositionNear(
+  event: React.DragEvent<HTMLElement>,
+  element: HTMLElement,
+): "before" | "after" {
+  const rect = element.getBoundingClientRect();
+  const offset = event.clientY - rect.top;
+  return offset < rect.height / 2 ? "before" : "after";
+}
+
 interface NoteItemProps {
   note: NoteMetadata;
   isRoot?: boolean;
@@ -322,6 +341,7 @@ interface NoteItemProps {
   setDragOverCategory: (cat: string | null) => void;
   onSelect: (id: string) => void;
   onOpenMenu: (event: MouseEvent<HTMLElement>, id: string) => void;
+  onReorderNote?: (sourceId: string, targetId: string, position: "before" | "after") => void;
   cloudStatusMap: Record<string, boolean>;
   t: TFunction;
 }
@@ -335,20 +355,57 @@ function NoteItem({
   setDragOverCategory,
   onSelect,
   onOpenMenu,
+  onReorderNote,
   cloudStatusMap,
   t,
 }: NoteItemProps) {
   const isSelected = note.id === selectedId;
   const isHovered = note.id === hoveredId;
+  const [dragOverPosition, setDragOverPosition] = useState<"before" | "after" | null>(null);
+  const itemRef = useRef<HTMLDivElement>(null);
   return (
     <div
+      ref={itemRef}
       key={note.id}
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData(NOTE_DRAG_MIME, note.id);
+        e.dataTransfer.setData(NOTE_DRAG_CATEGORY_MIME, note.category);
         e.dataTransfer.effectAllowed = "move";
       }}
-      onDragEnd={() => setDragOverCategory(null)}
+      onDragEnd={() => {
+        setDragOverCategory(null);
+        setDragOverPosition(null);
+      }}
+      onDragOver={(e) => {
+        if (!hasDragType(e.dataTransfer, NOTE_DRAG_MIME)) return;
+        const sourceCategory = getDragNoteCategory(e.dataTransfer);
+        if (sourceCategory !== note.category) return;
+        if (!itemRef.current || !onReorderNote) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = "move";
+        setDragOverPosition(dropPositionNear(e, itemRef.current));
+      }}
+      onDragLeave={() => setDragOverPosition(null)}
+      onDrop={(e) => {
+        if (!hasDragType(e.dataTransfer, NOTE_DRAG_MIME)) return;
+        const sourceCategory = getDragNoteCategory(e.dataTransfer);
+        if (sourceCategory !== note.category || !onReorderNote) {
+          setDragOverPosition(null);
+          return;
+        }
+        const sourceId = getDragNoteId(e.dataTransfer);
+        if (!sourceId || sourceId === note.id || !itemRef.current) {
+          setDragOverPosition(null);
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        const position = dropPositionNear(e, itemRef.current);
+        setDragOverPosition(null);
+        onReorderNote(sourceId, note.id, position);
+      }}
       onClick={() => onSelect(note.id)}
       onContextMenu={(event) => onOpenMenu(event, note.id)}
       onMouseEnter={() => setHoveredId(note.id)}
@@ -358,6 +415,12 @@ function NoteItem({
       } ${isSelected ? "bg-bamboo-mist/70" : isHovered ? "bg-paper-warm/70" : "bg-transparent"}`}
       style={isRoot ? undefined : { width: "calc(100% - 8px)" }}
     >
+      {dragOverPosition === "before" && (
+        <div className="absolute top-0 left-2 right-2 h-[2px] bg-bamboo rounded-full z-10" />
+      )}
+      {dragOverPosition === "after" && (
+        <div className="absolute bottom-0 left-2 right-2 h-[2px] bg-bamboo rounded-full z-10" />
+      )}
       <div
         className={`absolute left-0 top-1/2 -translate-y-1/2 w-[3px] rounded-r-full bg-bamboo/60 transition-all duration-[600ms] ${
           isSelected ? "h-5 opacity-100" : "h-0 opacity-0"
@@ -420,6 +483,12 @@ interface CategoryNodeProps {
   setDragOverCategory: (cat: string | null) => void;
   handleMoveNote: (noteId: string, targetCategory: string) => void;
   handleMoveCategory: (sourceCategory: string, targetCategory: string) => void;
+  handleReorderNote: (sourceId: string, targetId: string, position: "before" | "after") => void;
+  handleReorderCategory: (
+    sourceCategory: string,
+    targetCategory: string,
+    position: "before" | "after",
+  ) => void;
   handleSelectNote: (id: string) => void;
   handleOpenNoteMenu: (event: MouseEvent<HTMLElement>, id: string) => void;
   setRenamingCategory: (cat: string | null) => void;
@@ -446,6 +515,8 @@ function CategoryNode({
   setDragOverCategory,
   handleMoveNote,
   handleMoveCategory,
+  handleReorderNote,
+  handleReorderCategory,
   handleSelectNote,
   handleOpenNoteMenu,
   setRenamingCategory,
@@ -457,10 +528,13 @@ function CategoryNode({
   t,
 }: CategoryNodeProps) {
   const isCollapsed = collapsedCategories.has(node.category);
+  const [categoryDragPosition, setCategoryDragPosition] = useState<"before" | "after" | null>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
   return (
     <div key={node.category} className="px-2 mb-0.5" style={{ paddingLeft: `${level * 12}px` }}>
       <div
-        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg group/cat cursor-pointer select-none transition-all duration-200 ${
+        ref={headerRef}
+        className={`relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg group/cat cursor-pointer select-none transition-all duration-200 ${
           dragOverCategory === node.category
             ? "bg-bamboo/15 border border-bamboo/40 ring-1 ring-bamboo/20"
             : isCollapsed
@@ -484,10 +558,28 @@ function CategoryNode({
           e.dataTransfer.setData(CATEGORY_DRAG_MIME, node.category);
           e.dataTransfer.effectAllowed = "move";
         }}
-        onDragEnd={() => setDragOverCategory(null)}
+        onDragEnd={() => {
+          setDragOverCategory(null);
+          setCategoryDragPosition(null);
+        }}
         onDragOver={(e) => {
           const hasNote = hasDragType(e.dataTransfer, NOTE_DRAG_MIME);
           const hasCategory = hasDragType(e.dataTransfer, CATEGORY_DRAG_MIME);
+          if (hasCategory && headerRef.current) {
+            const sourceCategory = getDragCategory(e.dataTransfer);
+            if (
+              sourceCategory &&
+              sourceCategory !== node.category &&
+              parentCategoryPath(sourceCategory) === parentCategoryPath(node.category)
+            ) {
+              e.preventDefault();
+              e.stopPropagation();
+              e.dataTransfer.dropEffect = "move";
+              setDragOverCategory(node.category);
+              setCategoryDragPosition(dropPositionNear(e, headerRef.current));
+              return;
+            }
+          }
           if (!hasNote && !hasCategory) return;
           e.preventDefault();
           e.stopPropagation();
@@ -498,11 +590,30 @@ function CategoryNode({
           if (!e.currentTarget.parentElement?.contains(e.relatedTarget as Node)) {
             setDragOverCategory(null);
           }
+          setCategoryDragPosition(null);
         }}
         onDrop={(e) => {
+          const hasCategory = hasDragType(e.dataTransfer, CATEGORY_DRAG_MIME);
+          if (hasCategory && headerRef.current) {
+            const sourceCategory = getDragCategory(e.dataTransfer);
+            if (
+              sourceCategory &&
+              sourceCategory !== node.category &&
+              parentCategoryPath(sourceCategory) === parentCategoryPath(node.category)
+            ) {
+              e.preventDefault();
+              e.stopPropagation();
+              const position = dropPositionNear(e, headerRef.current);
+              setDragOverCategory(null);
+              setCategoryDragPosition(null);
+              void handleReorderCategory(sourceCategory, node.category, position);
+              return;
+            }
+          }
           e.preventDefault();
           e.stopPropagation();
           setDragOverCategory(null);
+          setCategoryDragPosition(null);
           const noteId = getDragNoteId(e.dataTransfer);
           if (noteId) {
             void handleMoveNote(noteId, node.category);
@@ -514,6 +625,12 @@ function CategoryNode({
           }
         }}
       >
+        {categoryDragPosition === "before" && (
+          <div className="absolute -top-[1px] left-0 right-0 h-[2px] bg-bamboo rounded-full z-10" />
+        )}
+        {categoryDragPosition === "after" && (
+          <div className="absolute -bottom-[1px] left-0 right-0 h-[2px] bg-bamboo rounded-full z-10" />
+        )}
         <svg
           width="10"
           height="10"
@@ -614,6 +731,7 @@ function CategoryNode({
                   setDragOverCategory={setDragOverCategory}
                   onSelect={handleSelectNote}
                   onOpenMenu={handleOpenNoteMenu}
+                  onReorderNote={handleReorderNote}
                   cloudStatusMap={cloudStatusMap}
                   t={t}
                 />
@@ -635,6 +753,8 @@ function CategoryNode({
                   setDragOverCategory={setDragOverCategory}
                   handleMoveNote={handleMoveNote}
                   handleMoveCategory={handleMoveCategory}
+                  handleReorderNote={handleReorderNote}
+                  handleReorderCategory={handleReorderCategory}
                   handleSelectNote={handleSelectNote}
                   handleOpenNoteMenu={handleOpenNoteMenu}
                   setRenamingCategory={setRenamingCategory}
@@ -884,8 +1004,8 @@ export function MainWindow({
   const filteredNotes = useMemo(() => filterNotes(notes, searchQuery), [notes, searchQuery]);
 
   const categoryGroups = useMemo(
-    () => groupNotesByCategory(filteredNotes, categories),
-    [filteredNotes, categories],
+    () => groupNotesByCategory(filteredNotes, categories, settingsConfig?.categoryOrder),
+    [filteredNotes, categories, settingsConfig?.categoryOrder],
   );
 
   const categoryTree = useMemo(() => buildCategoryTree(categoryGroups), [categoryGroups]);
@@ -1841,6 +1961,81 @@ export function MainWindow({
     }
   };
 
+  const noteOrderComparator = (a: NoteMetadata, b: NoteMetadata): number => {
+    const orderA = a.order ?? 0;
+    const orderB = b.order ?? 0;
+    if (orderA !== orderB) return orderA - orderB;
+    return b.updatedAt.localeCompare(a.updatedAt);
+  };
+
+  const handleReorderNote = async (
+    sourceId: string,
+    targetId: string,
+    position: "before" | "after",
+  ) => {
+    const source = notes.find((note) => note.id === sourceId);
+    const target = notes.find((note) => note.id === targetId);
+    if (!source || !target || source.id === target.id) return;
+    if (source.category !== target.category) return;
+
+    const siblings = notes
+      .filter((note) => note.category === target.category)
+      .sort(noteOrderComparator);
+    const sourceIndex = siblings.findIndex((note) => note.id === sourceId);
+    const targetIndex = siblings.findIndex((note) => note.id === targetId);
+    if (sourceIndex === -1 || targetIndex === -1) return;
+
+    let insertIndex = position === "after" ? targetIndex + 1 : targetIndex;
+    if (sourceIndex < insertIndex) insertIndex--;
+    const reordered = [...siblings];
+    reordered.splice(sourceIndex, 1);
+    reordered.splice(insertIndex, 0, source);
+
+    try {
+      await reorderNotes(reordered.map((note) => note.id));
+      await refreshNotes();
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  };
+
+  const handleReorderCategory = async (
+    sourceCategory: string,
+    targetCategory: string,
+    position: "before" | "after",
+  ) => {
+    const currentOrder = settingsConfig?.categoryOrder ?? [];
+    const baseline = [...categories].sort((a, b) => compareCategoryOrder(a, b, currentOrder));
+    const parent = parentCategoryPath(sourceCategory);
+    if (parentCategoryPath(targetCategory) !== parent) return;
+
+    const siblings = baseline.filter((category) => parentCategoryPath(category) === parent);
+    const sourceIndex = siblings.indexOf(sourceCategory);
+    const targetIndex = siblings.indexOf(targetCategory);
+    if (sourceIndex === -1 || targetIndex === -1 || sourceIndex === targetIndex) return;
+
+    let insertIndex = position === "after" ? targetIndex + 1 : targetIndex;
+    if (sourceIndex < insertIndex) insertIndex--;
+    const reordered = [...siblings];
+    reordered.splice(sourceIndex, 1);
+    reordered.splice(insertIndex, 0, sourceCategory);
+
+    const siblingSet = new Set(siblings);
+    const firstSiblingIndex = baseline.indexOf(sourceCategory);
+    const newOrder = baseline.filter((category) => !siblingSet.has(category));
+    newOrder.splice(Math.min(firstSiblingIndex, newOrder.length), 0, ...reordered);
+
+    try {
+      await reorderCategories(newOrder);
+      await refreshNotes();
+      setSettingsConfig((previous) =>
+        previous ? { ...previous, categoryOrder: newOrder } : previous,
+      );
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  };
+
   const handleCreateCategory = async () => {
     const name = categoryInputValue.trim();
     if (!name) {
@@ -2662,6 +2857,7 @@ export function MainWindow({
                               setDragOverCategory={setDragOverCategory}
                               onSelect={handleSelectNote}
                               onOpenMenu={handleOpenNoteMenu}
+                              onReorderNote={handleReorderNote}
                               cloudStatusMap={cloudStatusMap}
                               t={t}
                             />
@@ -2692,6 +2888,8 @@ export function MainWindow({
                       setDragOverCategory={setDragOverCategory}
                       handleMoveNote={handleMoveNote}
                       handleMoveCategory={handleMoveCategory}
+                      handleReorderNote={handleReorderNote}
+                      handleReorderCategory={handleReorderCategory}
                       handleSelectNote={handleSelectNote}
                       handleOpenNoteMenu={handleOpenNoteMenu}
                       setRenamingCategory={setRenamingCategory}

@@ -53,11 +53,34 @@ export interface CategoryTreeNode {
   children: CategoryTreeNode[];
 }
 
+function categoryOrderRank(category: string, order: string[] | undefined): number {
+  if (!order) return Number.POSITIVE_INFINITY;
+  const index = order.indexOf(category);
+  return index === -1 ? Number.POSITIVE_INFINITY : index;
+}
+
+export function compareCategoryOrder(a: string, b: string, order: string[] | undefined): number {
+  const rankA = categoryOrderRank(a, order);
+  const rankB = categoryOrderRank(b, order);
+  if (rankA !== rankB) {
+    if (rankA === Number.POSITIVE_INFINITY) return 1;
+    if (rankB === Number.POSITIVE_INFINITY) return -1;
+    return rankA - rankB;
+  }
+  if (!a) return 1;
+  if (!b) return -1;
+  return a.localeCompare(b);
+}
+
+export function parentCategoryPath(category: string): string {
+  const lastSlash = category.lastIndexOf("/");
+  return lastSlash === -1 ? "" : category.slice(0, lastSlash);
+}
+
 export function buildCategoryTree(groups: CategoryGroup[]): CategoryTreeNode[] {
   const roots: CategoryTreeNode[] = [];
-  const sorted = [...groups].sort((a, b) => a.category.localeCompare(b.category));
 
-  for (const group of sorted) {
+  for (const group of groups) {
     if (!group.category) continue;
     insertCategoryNode(roots, group);
   }
@@ -83,7 +106,6 @@ function insertCategoryNode(nodes: CategoryTreeNode[], group: CategoryGroup): vo
         children: [],
       };
       current.push(node);
-      current.sort((a, b) => a.name.localeCompare(b.name));
     }
     if (i === segments.length - 1) {
       node.notes = group.notes;
@@ -96,6 +118,7 @@ function insertCategoryNode(nodes: CategoryTreeNode[], group: CategoryGroup): vo
 export function groupNotesByCategory(
   notes: NoteMetadata[],
   allCategories: string[] = [],
+  categoryOrder: string[] = [],
 ): CategoryGroup[] {
   const groups = new Map<string, NoteMetadata[]>();
 
@@ -115,7 +138,12 @@ export function groupNotesByCategory(
 
   const result: CategoryGroup[] = [];
   for (const [category, categoryNotes] of groups) {
-    categoryNotes.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    categoryNotes.sort((a, b) => {
+      const orderA = a.order ?? 0;
+      const orderB = b.order ?? 0;
+      if (orderA !== orderB) return orderA - orderB;
+      return b.updatedAt.localeCompare(a.updatedAt);
+    });
     result.push({
       category,
       notes: categoryNotes,
@@ -123,15 +151,7 @@ export function groupNotesByCategory(
     });
   }
 
-  result.sort((a, b) => {
-    if (!a.category) return 1;
-    if (!b.category) return -1;
-    const aEmpty = a.notes.length === 0;
-    const bEmpty = b.notes.length === 0;
-    if (aEmpty && !bEmpty) return -1;
-    if (!aEmpty && bEmpty) return 1;
-    return a.category.localeCompare(b.category);
-  });
+  result.sort((a, b) => compareCategoryOrder(a.category, b.category, categoryOrder));
   return result;
 }
 
@@ -151,6 +171,14 @@ export function formatShortDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "--";
   return `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+export function countCategoryNotes(node: CategoryTreeNode): number {
+  let count = node.notes.length;
+  for (const child of node.children) {
+    count += countCategoryNotes(child);
+  }
+  return count;
 }
 
 export function formatTime(value: string): string {

@@ -58,6 +58,7 @@ describe("settings api", () => {
       tileRenderMarkdown: false,
       renderHtmlMarkdown: false,
       openAtCursor: true,
+      categoryOrder: [],
     };
     mockedInvoke.mockResolvedValue(config);
 
@@ -97,6 +98,7 @@ describe("settings api", () => {
       tileRenderMarkdown: false,
       renderHtmlMarkdown: false,
       openAtCursor: true,
+      categoryOrder: [],
     };
     mockedInvoke.mockResolvedValue(config);
 

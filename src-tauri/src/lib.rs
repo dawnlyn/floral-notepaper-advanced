@@ -192,6 +192,20 @@ fn notes_move_category(
 }
 
 #[tauri::command]
+fn notes_reorder(app: AppHandle, ordered_ids: Vec<String>) -> Result<(), AppError> {
+    default_store()?.reorder_notes(&ordered_ids)?;
+    let _ = app.emit("notes-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn categories_reorder(app: AppHandle, ordered_categories: Vec<String>) -> Result<(), AppError> {
+    default_store()?.reorder_categories(&ordered_categories)?;
+    let _ = app.emit("config-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
 fn images_save(note_id: String, data: Vec<u8>, extension: String) -> Result<String, AppError> {
     default_store()?.save_image(&note_id, &data, &extension)
 }
@@ -471,6 +485,8 @@ pub fn run() {
             notes_import_markdown,
             notes_export_markdown,
             notes_move_category,
+            notes_reorder,
+            categories_reorder,
             read_external_file,
             save_external_file,
             get_file_modified_time,

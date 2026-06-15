@@ -7,15 +7,7 @@ export type BackgroundFit = "cover" | "contain" | "repeat";
 
 export type OssProvider = "aliyun-oss" | "";
 
-export type SyncInterval =
-  | "off"
-  | "1min"
-  | "3min"
-  | "5min"
-  | "10min"
-  | "30min"
-  | "1hour"
-  | "daily";
+export type SyncInterval = "off" | "1min" | "3min" | "5min" | "10min" | "30min" | "1hour" | "daily";
 
 export type SyncStrategy = "localWins" | "remoteWins" | "manual";
 
@@ -62,4 +54,5 @@ export interface AppConfig {
   syncOnStartup: boolean;
   syncInterval: SyncInterval;
   syncStrategy: SyncStrategy;
+  categoryOrder: string[];
 }
