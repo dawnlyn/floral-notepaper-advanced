@@ -61,6 +61,7 @@ import type { ExternalFile, Note, NoteMetadata } from "../features/notes/types";
 import {
   buildCategoryTree,
   compareCategoryOrder,
+  countCategoryNotes,
   countNoteChars,
   filterNotes,
   formatShortDate,
@@ -678,7 +679,7 @@ function CategoryNode({
           <span className="text-[11px] text-bamboo/70 font-medium truncate">{node.name}</span>
         )}
         <span className="text-[9px] text-bamboo/40 font-mono ml-auto shrink-0">
-          {node.notes.length}
+          {countCategoryNotes(node)}
         </span>
       </div>
 
