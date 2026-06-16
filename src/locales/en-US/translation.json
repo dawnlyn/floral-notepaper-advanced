@@ -527,7 +527,12 @@
         "updatedAt": "Modified"
       },
       "resolveSuccess": "Conflict resolved",
-      "resolveError": "Failed to resolve conflict: {{message}}"
+      "resolveError": "Failed to resolve conflict: {{message}}",
+      "keepLine": "Keep",
+      "skipLine": "Skip",
+      "localShort": "Local",
+      "remoteShort": "Cloud",
+      "lineAction": "Select"
     }
   },
   "recycleBin": {

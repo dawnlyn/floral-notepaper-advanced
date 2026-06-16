@@ -527,7 +527,12 @@
         "updatedAt": "修改时间"
       },
       "resolveSuccess": "冲突已解决",
-      "resolveError": "解决冲突失败：{{message}}"
+      "resolveError": "解决冲突失败：{{message}}",
+      "keepLine": "保留",
+      "skipLine": "跳过",
+      "localShort": "本地",
+      "remoteShort": "云端",
+      "lineAction": "选择"
     }
   },
   "recycleBin": {

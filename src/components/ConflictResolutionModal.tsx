@@ -15,6 +15,10 @@ interface ConflictResolutionModalProps {
   open: boolean;
   onClose: () => void;
   onResolved?: () => void;
+  mockData?: {
+    conflicts: PendingConflict[];
+    details: Record<string, SyncConflictDetailDto>;
+  };
 }
 
 interface MergeDraft {
@@ -35,9 +39,12 @@ export function ConflictResolutionModal({
   open,
   onClose,
   onResolved,
+  mockData,
 }: ConflictResolutionModalProps) {
   const { t } = useTranslation();
-  const [conflicts, setConflicts] = useState<PendingConflict[]>([]);
+  const [conflicts, setConflicts] = useState<PendingConflict[]>(
+    () => mockData?.conflicts.filter((c) => !c.resolved) ?? [],
+  );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<SyncConflictDetailDto | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -46,6 +53,10 @@ export function ConflictResolutionModal({
   const [bulkConfirm, setBulkConfirm] = useState<"local" | "remote" | null>(null);
 
   const loadConflicts = useCallback(async () => {
+    if (mockData) {
+      setConflicts(mockData.conflicts.filter((c) => !c.resolved));
+      return;
+    }
     try {
       const list = await listSyncConflicts();
       setConflicts(list.filter((c) => !c.resolved));
@@ -57,7 +68,7 @@ export function ConflictResolutionModal({
         }),
       );
     }
-  }, [t]);
+  }, [t, mockData]);
 
   useEffect(() => {
     if (!open) {
@@ -74,6 +85,21 @@ export function ConflictResolutionModal({
   useEffect(() => {
     if (!open || !selectedId) {
       setDetail(null);
+      return;
+    }
+    if (mockData) {
+      const d = mockData.details[selectedId] ?? null;
+      setDetail(d);
+      if (d) {
+        setDrafts((prev) => ({
+          ...prev,
+          [d.noteId]: prev[d.noteId] ?? {
+            title: d.localTitle,
+            category: d.localCategory,
+            content: d.localContent,
+          },
+        }));
+      }
       return;
     }
     setLoadingDetail(true);
@@ -98,7 +124,7 @@ export function ConflictResolutionModal({
         );
       })
       .finally(() => setLoadingDetail(false));
-  }, [open, selectedId, t]);
+  }, [open, selectedId, t, mockData]);
 
   useEffect(() => {
     if (conflicts.length > 0 && !selectedId) {
@@ -137,6 +163,14 @@ export function ConflictResolutionModal({
   const handleResolve = useCallback(
     async (choice: "local" | "remote" | "merge") => {
       if (!detail || !selectedDraft) return;
+      if (mockData) {
+        showToast(
+          `${t("sync.conflict.resolveSuccess", { defaultValue: "Conflict resolved" })}（Mock）`,
+        );
+        onResolved?.();
+        onClose();
+        return;
+      }
       setResolving(true);
       try {
         await resolveSyncConflict({
@@ -165,11 +199,19 @@ export function ConflictResolutionModal({
         setResolving(false);
       }
     },
-    [detail, selectedDraft, conflicts, loadConflicts, onResolved, t],
+    [detail, selectedDraft, conflicts, loadConflicts, onResolved, t, mockData, onClose],
   );
 
   const handleResolveAll = useCallback(
     async (strategy: "local" | "remote") => {
+      if (mockData) {
+        showToast(
+          `${t("sync.conflict.resolveSuccess", { defaultValue: "All conflicts resolved" })}（Mock）`,
+        );
+        onResolved?.();
+        onClose();
+        return;
+      }
       setResolving(true);
       try {
         await resolveAllSyncConflicts(strategy);
@@ -188,7 +230,7 @@ export function ConflictResolutionModal({
         setBulkConfirm(null);
       }
     },
-    [loadConflicts, onResolved, t],
+    [loadConflicts, onResolved, t, mockData, onClose],
   );
 
   const conflictTypeBadges = useCallback(
@@ -340,7 +382,7 @@ export function ConflictResolutionModal({
           ) : (
             <>
               <div className="px-5 py-3 border-b border-paper-deep/25 space-y-3">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-[1fr_1fr_auto] gap-4 items-end">
                   <div>
                     <label className="block text-[10px] text-ink-ghost mb-1">
                       {t("sync.conflict.field.title")} — {t("sync.conflict.localVersion")}
@@ -369,9 +411,25 @@ export function ConflictResolutionModal({
                       {detail.remoteTitle || t("common.untitledNote")}
                     </div>
                   </div>
+                  <div className="flex items-center gap-2 pb-[3px]">
+                    <button
+                      type="button"
+                      onClick={() => updateDraft({ title: detail.localTitle })}
+                      className="h-7 px-2 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-colors cursor-pointer"
+                    >
+                      {t("sync.conflict.chooseLocal")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateDraft({ title: detail.remoteTitle })}
+                      className="h-7 px-2 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-colors cursor-pointer"
+                    >
+                      {t("sync.conflict.chooseRemote")}
+                    </button>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-[1fr_1fr_auto] gap-4 items-end">
                   <div>
                     <label className="block text-[10px] text-ink-ghost mb-1">
                       {t("sync.conflict.field.category")} — {t("sync.conflict.localVersion")}
@@ -402,6 +460,22 @@ export function ConflictResolutionModal({
                         t("main.category.uncategorized", { defaultValue: "未分类" })}
                     </div>
                   </div>
+                  <div className="flex items-center gap-2 pb-[3px]">
+                    <button
+                      type="button"
+                      onClick={() => updateDraft({ category: detail.localCategory })}
+                      className="h-7 px-2 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-colors cursor-pointer"
+                    >
+                      {t("sync.conflict.chooseLocal")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateDraft({ category: detail.remoteCategory })}
+                      className="h-7 px-2 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-colors cursor-pointer"
+                    >
+                      {t("sync.conflict.chooseRemote")}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
@@ -422,31 +496,6 @@ export function ConflictResolutionModal({
                     </div>
                   </div>
                 </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-[10px] text-ink-ghost mb-1">
-                      {t("sync.conflict.mergedVersion")} — {t("sync.conflict.field.title")}
-                    </label>
-                    <input
-                      type="text"
-                      value={selectedDraft?.title ?? detail.localTitle}
-                      onChange={(e) => updateDraft({ title: e.target.value })}
-                      className="w-full h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[12px] text-ink-soft outline-none focus:border-bamboo/40"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] text-ink-ghost mb-1">
-                      {t("sync.conflict.mergedVersion")} — {t("sync.conflict.field.category")}
-                    </label>
-                    <input
-                      type="text"
-                      value={selectedDraft?.category ?? detail.localCategory}
-                      onChange={(e) => updateDraft({ category: e.target.value })}
-                      className="w-full h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[12px] text-ink-soft outline-none focus:border-bamboo/40"
-                    />
-                  </div>
-                </div>
               </div>
 
               <div className="flex-1 min-h-0 px-5 py-3">
@@ -458,6 +507,10 @@ export function ConflictResolutionModal({
                   copyLocalLabel={t("sync.conflict.chooseLocal")}
                   copyRemoteLabel={t("sync.conflict.chooseRemote")}
                   mergedLabel={t("sync.conflict.mergedVersion")}
+                  mergedTitle={selectedDraft?.title ?? detail.localTitle}
+                  mergedCategory={selectedDraft?.category ?? detail.localCategory}
+                  onChangeTitle={(title) => updateDraft({ title })}
+                  onChangeCategory={(category) => updateDraft({ category })}
                 />
               </div>
 

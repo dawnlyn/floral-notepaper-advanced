@@ -508,7 +508,12 @@
         "updatedAt": "修改時間"
       },
       "resolveSuccess": "衝突已解決",
-      "resolveError": "解決衝突失敗：{{message}}"
+      "resolveError": "解決衝突失敗：{{message}}",
+      "keepLine": "保留",
+      "skipLine": "跳過",
+      "localShort": "本地",
+      "remoteShort": "雲端",
+      "lineAction": "選擇"
     }
   },
   "recycleBin": {

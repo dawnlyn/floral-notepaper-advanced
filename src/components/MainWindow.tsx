@@ -80,6 +80,7 @@ import {
 } from "../features/notes/noteContextMenu";
 import { openNotepadWindow, takeStartupFile, toggleTileWindow } from "../features/windows/api";
 import { getNotesCloudStatus, listSyncConflicts } from "../features/sync/api";
+import { MOCK_CONFLICT_DATA } from "../features/sync/mockConflicts";
 import {
   closeCurrentWindow,
   minimizeCurrentWindow,
@@ -953,6 +954,7 @@ export function MainWindow({
   const [blankMenu, setBlankMenu] = useState<{ x: number; y: number } | null>(null);
   const [blankMenuClosing, setBlankMenuClosing] = useState(false);
   const [conflictModalOpen, setConflictModalOpen] = useState(false);
+  const [manualConflictModalOpen, setManualConflictModalOpen] = useState(false);
   const [pendingConflictCount, setPendingConflictCount] = useState(0);
   const contentRef = useRef<HTMLTextAreaElement>(null);
   const windowLabelRef = useRef("main");
@@ -2497,8 +2499,7 @@ export function MainWindow({
   };
 
   const handleDebugButtonClick = () => {
-    // Add temporary debug/test logic here.
-    console.log("[Debug] button clicked");
+    setManualConflictModalOpen(true);
   };
 
   const [isMaximized, setIsMaximized] = useState(false);
@@ -3971,6 +3972,12 @@ export function MainWindow({
         open={conflictModalOpen}
         onClose={() => setConflictModalOpen(false)}
         onResolved={refreshPendingConflicts}
+      />
+
+      <ConflictResolutionModal
+        open={manualConflictModalOpen}
+        onClose={() => setManualConflictModalOpen(false)}
+        mockData={MOCK_CONFLICT_DATA}
       />
 
       {blankMenu && (
